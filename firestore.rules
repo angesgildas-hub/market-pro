@@ -1,0 +1,272 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrapAdmin() {
+      return isSignedIn() && request.auth.token.email == 'anges.gildas@gmail.com';
+    }
+
+    function getUserData() {
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(path) ? get(path).data : {};
+    }
+
+    function hasStoreAccess() {
+      return isSignedIn() && (isBootstrapAdmin() || exists(/databases/$(database)/documents/users/$(request.auth.uid)));
+    }
+
+    function userStoreId() {
+      return getUserData().get('storeId', 'none');
+    }
+
+    function belongsToStore(data) {
+      return isBootstrapAdmin() || (isSignedIn() && data.get('storeId', '') == userStoreId());
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin() || getUserData().get('role', 'none') in ['admin', 'manager'];
+    }
+
+    function canRead(module) {
+      return isBootstrapAdmin() || 
+             getUserData().get('role', 'none') in ['admin', 'manager'] || 
+             getUserData().get('permissions', {}).get(module, {}).get('read', false) == true;
+    }
+
+    function isLicenseActive() {
+      return isBootstrapAdmin() || (
+        isSignedIn() && 
+        exists(/databases/$(database)/documents/storeSettings/$(userStoreId())) &&
+        get(/databases/$(database)/documents/storeSettings/$(userStoreId())).data.get('licenseStatus', 'inactive') == 'active'
+      );
+    }
+
+    function canCreate(module) {
+      return (isBootstrapAdmin() || (
+        getUserData().get('role', 'none') in ['admin', 'manager'] || 
+        getUserData().get('permissions', {}).get(module, {}).get('create', false) == true
+      )) && isLicenseActive();
+    }
+
+    function canUpdate(module) {
+      return (isBootstrapAdmin() || (
+        getUserData().get('role', 'none') in ['admin', 'manager'] || 
+        getUserData().get('permissions', {}).get(module, {}).get('update', false) == true
+      )) && isLicenseActive();
+    }
+
+    function canDelete(module) {
+      return (isBootstrapAdmin() || (
+        getUserData().get('role', 'none') in ['admin', 'manager'] || 
+        getUserData().get('permissions', {}).get(module, {}).get('delete', false) == true
+      )) && isLicenseActive();
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Blueprints ---
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'storeId', 'email', 'role']) &&
+             data.uid is string &&
+             data.storeId is string &&
+             data.role in ['admin', 'manager', 'cashier'];
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['storeId', 'barcode', 'name', 'price', 'stock', 'unit']) &&
+             data.storeId is string &&
+             data.barcode is string && data.barcode.size() <= 100 &&
+             data.name is string && data.name.size() <= 200 &&
+             data.price is number && data.price >= 0 &&
+             data.stock is number &&
+             data.unit in ['pcs', 'kg', 'g', 'ml', 'l'];
+    }
+
+    match /products/{productId} {
+      allow read: if canRead('inventory') && belongsToStore(existing());
+      allow list: if canRead('inventory') && belongsToStore(resource.data);
+      allow create: if canCreate('inventory') && isValidProduct(incoming()) && belongsToStore(incoming()) && isValidId(productId);
+      allow update: if canUpdate('inventory') && belongsToStore(existing()) && (
+        // Stock adjustment only (ERP internal logic)
+        (incoming().diff(existing()).affectedKeys().hasOnly(['stock', 'updatedAt', 'lastStockAdjustment']) && incoming().stock is number) ||
+        // Full update
+        (isValidProduct(incoming()) && incoming().storeId == existing().storeId)
+      );
+      allow delete: if canDelete('inventory') && belongsToStore(existing());
+    }
+
+    match /categories/{categoryId} {
+      allow read: if canRead('inventory') && belongsToStore(existing());
+      allow list: if canRead('inventory') && belongsToStore(resource.data);
+      allow write: if canCreate('inventory') && belongsToStore(incoming()) && incoming().name is string && incoming().name.size() <= 100 && isValidId(categoryId);
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll(['storeId', 'timestamp', 'cashierId', 'totalAmount', 'paymentMethod']) &&
+             data.storeId is string &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.paymentMethod in ['cash', 'card', 'mobile'] &&
+             data.cashierId == request.auth.uid;
+    }
+
+    match /sales/{saleId} {
+      allow read: if (canRead('sales') || canRead('pos')) && belongsToStore(existing());
+      allow list: if (canRead('sales') || canRead('pos')) && belongsToStore(resource.data);
+      allow create: if canCreate('pos') && isValidSale(incoming()) && belongsToStore(incoming()) && isValidId(saleId);
+      allow update: if false; // Immutable sales for LRS integrity
+      allow delete: if canDelete('sales') && belongsToStore(existing());
+
+      match /items/{itemId} {
+        allow read: if (canRead('sales') || canRead('pos')) && get(/databases/$(database)/documents/sales/$(saleId)).data.storeId == userStoreId();
+        allow create: if canCreate('pos') && isValidId(itemId);
+        allow delete: if canDelete('sales') && get(/databases/$(database)/documents/sales/$(saleId)).data.storeId == userStoreId();
+      }
+    }
+
+    match /systemConfig/{configId} {
+      allow read: if true; // Public for login configuration
+      allow write: if isBootstrapAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || (isAdmin() && existing().storeId == userStoreId()) || isBootstrapAdmin());
+      allow list: if isBootstrapAdmin() || (isSignedIn() && isAdmin() && resource.data.storeId == userStoreId());
+      allow create: if isBootstrapAdmin() || 
+                      (isSignedIn() && isAdmin() && incoming().storeId == userStoreId() && incoming().uid == userId && isValidUser(incoming())) || 
+                      (isSignedIn() && request.auth.uid == userId && incoming().uid == userId && incoming().role == 'admin' && incoming().isActive == false);
+      allow update: if isBootstrapAdmin() || 
+                      (isAdmin() && existing().storeId == userStoreId() && incoming().storeId == existing().storeId) ||
+                      (request.auth.uid == userId && incoming().role == existing().role && incoming().storeId == existing().storeId && incoming().isActive == existing().isActive);
+      allow delete: if isBootstrapAdmin() || (isAdmin() && existing().storeId == userStoreId());
+    }
+
+    match /storeSettings/{settingsId} {
+      // Branding identification is public, detailed settings are protected
+      allow get: if true; 
+      allow list: if isBootstrapAdmin();
+      allow create: if isBootstrapAdmin() || (isSignedIn() && settingsId == request.auth.uid);
+      allow update: if (isBootstrapAdmin()) || (
+        isAdmin() && settingsId == userStoreId() && (
+          // Store admins can only update brand and contact info, never license fields (ERP PROTECTION)
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'logo', 'logoUrl', 'signatureUrl', 'currency', 'updatedAt', 'operatorNumbers', 'selectedOperators'])
+        )
+      );
+      allow delete: if isBootstrapAdmin();
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll(['storeId', 'title', 'amount', 'category', 'date']) &&
+             data.storeId is string &&
+             data.amount is number && data.amount >= 0;
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if canRead('accounting') && belongsToStore(existing());
+      allow list: if canRead('accounting') && belongsToStore(resource.data);
+      allow create: if canCreate('accounting') && isValidExpense(incoming()) && belongsToStore(incoming()) && isValidId(expenseId);
+      allow update: if canUpdate('accounting') && belongsToStore(existing()) && incoming().storeId == existing().storeId && isValidExpense(incoming());
+      allow delete: if canDelete('accounting') && belongsToStore(existing());
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['storeId', 'action', 'userId', 'timestamp']) &&
+             data.storeId is string &&
+             data.action is string &&
+             data.userId == request.auth.uid;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if canRead('reports') && belongsToStore(existing());
+      allow list: if canRead('reports') && belongsToStore(resource.data);
+      allow create: if isSignedIn() && isValidAuditLog(incoming()) && belongsToStore(incoming()) && isValidId(logId);
+      allow update: if false; // Logs are immutable (LRS PROTECTION)
+      allow delete: if canDelete('reports') && belongsToStore(existing());
+    }
+
+    match /employees/{employeeId} {
+      allow read: if canRead('personnel') && belongsToStore(existing());
+      allow list: if canRead('personnel') && belongsToStore(resource.data);
+      allow create: if canCreate('personnel') && belongsToStore(incoming()) && isValidId(employeeId);
+      allow update: if canUpdate('personnel') && belongsToStore(existing()) && incoming().storeId == existing().storeId;
+      allow delete: if canDelete('personnel') && belongsToStore(existing());
+    }
+
+    match /leaves/{leaveId} {
+      allow read: if canRead('personnel') && belongsToStore(existing());
+      allow list: if canRead('personnel') && belongsToStore(resource.data);
+      allow create: if canCreate('personnel') && belongsToStore(incoming()) && isValidId(leaveId);
+      allow update: if canUpdate('personnel') && belongsToStore(existing()) && (
+        existing().status == 'pending' || isAdmin()
+      );
+      allow delete: if canDelete('personnel') && belongsToStore(existing());
+    }
+
+    match /payroll/{recordId} {
+      allow read: if canRead('personnel') && belongsToStore(existing());
+      allow list: if canRead('personnel') && belongsToStore(resource.data);
+      allow create: if canCreate('personnel') && belongsToStore(incoming()) && isValidId(recordId);
+      allow update: if canUpdate('personnel') && belongsToStore(existing()) && (
+        existing().status == 'pending' || isAdmin()
+      );
+      allow delete: if canDelete('personnel') && belongsToStore(existing());
+    }
+
+    match /clients/{clientId} {
+      allow read: if (canRead('clients') || canRead('pos')) && belongsToStore(existing());
+      allow list: if (canRead('clients') || canRead('pos')) && belongsToStore(resource.data);
+      allow create: if (canCreate('clients') || canCreate('pos')) && belongsToStore(incoming()) && isValidId(clientId);
+      allow update: if (canUpdate('clients') || canCreate('pos')) && belongsToStore(existing()) && incoming().storeId == existing().storeId;
+      allow delete: if canDelete('clients') && belongsToStore(existing());
+    }
+
+    match /mobileTransactions/{txId} {
+      allow read, list: if (canRead('pos') || canRead('accounting')) && belongsToStore(resource.data || existing());
+      allow create: if canCreate('pos') && belongsToStore(incoming()) && isValidId(txId);
+      allow update: if (canUpdate('pos') || isAdmin()) && belongsToStore(existing());
+      allow delete: if canDelete('accounting') && belongsToStore(existing());
+    }
+
+    match /mobileMoneyFloats/{storeId} {
+      allow read: if (canRead('pos') || canRead('accounting')) && (isBootstrapAdmin() || storeId == userStoreId());
+      allow write: if (canUpdate('pos') || isAdmin()) && (isBootstrapAdmin() || storeId == userStoreId());
+    }
+
+    match /mobileMoneySettings/{storeId} {
+      allow read: if (canRead('pos') || canRead('accounting')) && (isBootstrapAdmin() || storeId == userStoreId());
+      allow write: if (canUpdate('pos') || isAdmin()) && (isBootstrapAdmin() || storeId == userStoreId());
+    }
+
+    match /backups/{backupId} {
+      allow read: if isAdmin() && belongsToStore(existing());
+      allow create: if isAdmin() && belongsToStore(incoming()) && isValidId(backupId);
+      allow update, delete: if isAdmin() && belongsToStore(existing());
+    }
+
+    match /connectionHistory/{logId} {
+      allow read, list: if isBootstrapAdmin();
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid && isValidId(logId);
+      allow update: if false;
+      allow delete: if isBootstrapAdmin();
+    }
+  }
+}

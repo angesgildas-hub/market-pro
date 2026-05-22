@@ -1,0 +1,1707 @@
+import React, { useState, useEffect, useContext } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { useSearchParams } from 'react-router-dom';
+import { 
+  Shield, 
+  User, 
+  Palette, 
+  Database, 
+  Lock, 
+  History,
+  Check,
+  Download,
+  Upload,
+  AlertCircle,
+  Eye,
+  RefreshCcw,
+  Plus,
+  Globe,
+  Mail,
+  ShoppingBag,
+  X,
+  ArrowRight,
+  ShieldCheck,
+  UserPlus,
+  Trash2,
+  Edit3,
+  Search,
+  ChevronRight,
+  ChevronDown
+} from 'lucide-react';
+import { collection, onSnapshot, query, orderBy, limit, addDoc, serverTimestamp, doc, setDoc, getDoc, updateDoc, deleteDoc, getDocs, where } from 'firebase/firestore';
+import { updateProfile, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
+import { db, auth, config } from '../lib/firebase';
+import { AuditLog, StoreSettings, UserProfile, UserRole, UserPermissions, ModulePermissions } from '../types';
+import { logAction, AuditAction } from '../services/audit';
+import { AppContext, Theme } from '../App';
+import { translations, Language } from '../lib/translations';
+import { handleFirestoreError, OperationType } from '../services/db';
+
+export default function Settings() {
+  const { language, setLanguage, theme, setTheme, userRole, setUserRole, userProfile, verifyAction } = useContext(AppContext);
+  const t = translations[language];
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab');
+  
+  const setActiveTab = (tab: string | null) => {
+    if (tab === 'security' || tab === 'users') {
+      if (!verifiedTabs.includes(tab)) {
+        checkMasterPassword('NAVIGATE', tab);
+        return;
+      }
+    }
+    if (tab) {
+      setSearchParams({ tab });
+    } else {
+      setSearchParams({});
+    }
+  };
+
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isUploadingSignature, setIsUploadingSignature] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [storeSettings, setStoreSettings] = useState<StoreSettings>({
+    id: 'main',
+    name: 'SuperMarket Pro',
+    address: 'Dakar, Sénégal',
+    phone: '+221 33 000 00 00',
+    updatedAt: new Date().toISOString()
+  });
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [isAddUserOpen, setIsAddUserOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+
+  // Sensitive Settings Password
+  const [isSetPasswordOpen, setIsSetPasswordOpen] = useState(false);
+  const [isVerifyPasswordOpen, setIsVerifyPasswordOpen] = useState(false);
+  const [verifiedTabs, setVerifiedTabs] = useState<string[]>([]);
+  const [settingsPasswordInput, setSettingsPasswordInput] = useState('');
+  const [pendingAction, setPendingAction] = useState<{ type: string; data?: any } | null>(null);
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  const [restoreData, setRestoreData] = useState<any>(null);
+
+  useEffect(() => {
+    if (userProfile && !userProfile.settingsPassword && !isSetPasswordOpen) {
+      setIsSetPasswordOpen(true);
+    }
+  }, [userProfile]);
+
+  useEffect(() => {
+    const unsubStore = onSnapshot(doc(db, 'storeSettings', userProfile?.storeId || 'main'), (snap) => {
+      if (snap.exists()) setStoreSettings(snap.data() as StoreSettings);
+    }, (error) => {
+      console.error("Error fetching store settings:", error);
+    });
+
+    let unsubUsers = () => {};
+    let unsubLogs = () => {};
+
+    if (userRole === 'admin' && userProfile?.storeId) {
+      unsubUsers = onSnapshot(query(collection(db, 'users'), where('storeId', '==', userProfile.storeId), orderBy('createdAt', 'desc')), (snap) => {
+        setUsers(snap.docs.map(doc => ({ ...doc.data(), uid: doc.id } as UserProfile)));
+      }, (error) => {
+        console.warn("Permission denied for users list - expected for non-admins.");
+      });
+
+      unsubLogs = onSnapshot(query(collection(db, 'auditLogs'), where('storeId', '==', userProfile.storeId), orderBy('timestamp', 'desc'), limit(50)), (snap) => {
+        setLogs(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as AuditLog)));
+      }, (error) => {
+        console.warn("Permission denied for audit logs - expected for non-admins.");
+      });
+    }
+
+    return () => {
+      unsubStore();
+      unsubUsers();
+      unsubLogs();
+    };
+  }, [userRole, userProfile?.storeId]);
+
+  const handleSetSettingsPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget as HTMLFormElement);
+    const password = formData.get('password') as string;
+    const confirm = formData.get('confirm') as string;
+
+    if (password.length < 4) {
+      alert("Le mot de passe doit faire au moins 4 caractères.");
+      return;
+    }
+    if (password !== confirm) {
+      alert("Les mots de passe ne correspondent pas.");
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'users', auth.currentUser!.uid), {
+        settingsPassword: password
+      });
+      setIsSetPasswordOpen(false);
+      alert("Changement du mot de passe effectué avec succès !");
+    } catch (err) {
+      alert("Erreur lors de l'enregistrement.");
+    }
+  };
+
+  const checkMasterPassword = (actionType: string, actionData?: any) => {
+    if (!userProfile?.settingsPassword) {
+      setIsSetPasswordOpen(true);
+      return;
+    }
+    setPendingAction({ type: actionType, data: actionData });
+    setIsVerifyPasswordOpen(true);
+  };
+
+  const handleVerifyPassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (settingsPasswordInput === userProfile?.settingsPassword) {
+      const action = pendingAction;
+      setPendingAction(null);
+      setIsVerifyPasswordOpen(false);
+      setSettingsPasswordInput('');
+      
+      switch (action?.type) {
+        case 'RESET': executeSystemReset(); break;
+        case 'RESTORE': executeRestore(); break;
+        case 'SAVE_STORE': handleSaveStoreSettings(); break;
+        case 'ADD_USER': setIsAddUserOpen(true); break;
+        case 'DELETE_USER': handleDeleteUser(action.data); break;
+        case 'UPDATE_PERMISSIONS': handleUpdateUserPermissions(action.data.uid, action.data.permissions); break;
+        case 'UPDATE_ROLE': handleUpdateUserRole(action.data.uid, action.data.role); break;
+        case 'TOGGLE_STATUS': handleToggleUserStatus(action.data.uid, action.data.isActive); break;
+        case 'RESET_USER_PASS': handleAdminResetPassword(action.data.email); break;
+        case 'NAVIGATE': 
+           if (action.data) {
+             setVerifiedTabs(prev => [...prev, action.data]);
+             setSearchParams({ tab: action.data });
+           }
+           break;
+      }
+    } else {
+      alert("Mot de passe de sécurité incorrect.");
+    }
+  };
+
+  const defaultPermissions = (): UserPermissions => ({
+    pos: { read: true, create: true, update: true, delete: true },
+    inventory: { read: true, create: true, update: true, delete: true },
+    accounting: { read: false, create: false, update: false, delete: false },
+    settings: { read: false, create: false, update: false, delete: false },
+    reports: { read: true, create: false, update: false, delete: false },
+    personnel: { read: false, create: false, update: false, delete: false },
+    clients: { read: true, create: true, update: true, delete: true },
+    sales: { read: true, create: false, update: false, delete: false }
+  });
+
+  const createAuditLog = async (action: string, details: string) => {
+    if (!userProfile?.storeId) {
+      console.warn("Skipping Audit Log: storeId is missing", { action, details });
+      return;
+    }
+    try {
+      await addDoc(collection(db, 'auditLogs'), {
+        storeId: userProfile.storeId,
+        action,
+        details,
+        userId: auth.currentUser?.uid,
+        userName: userProfile?.displayName || auth.currentUser?.displayName || 'Système',
+        timestamp: serverTimestamp()
+      });
+    } catch (e) {
+      console.error("Erreur Audit Log:", e);
+    }
+  };
+
+  const handleProfilePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !auth.currentUser) return;
+
+    setIsUploading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const base64 = event.target?.result as string;
+        // Firebase Auth photoURL has a limit, so we store it in Firestore instead
+        await updateDoc(doc(db, 'users', auth.currentUser!.uid), {
+          photoURL: base64
+        });
+        setIsUploading(false);
+        alert("Photo de profil mise à jour !");
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error(err);
+      setIsUploading(false);
+    }
+  };
+
+  const handleFileRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        setRestoreData(data);
+        checkMasterPassword('RESTORE');
+      } catch (err) {
+        alert("Fichier de sauvegarde invalide.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const executeRestore = async () => {
+    if (!restoreData || !userProfile?.storeId) return;
+    setIsActionLoading(true);
+    try {
+      for (const collName in restoreData) {
+        // Query only current store documents
+        const snap = await getDocs(query(collection(db, collName), where('storeId', '==', userProfile.storeId)));
+        for (const d of snap.docs) {
+          if (collName === 'sales') {
+            const itemsSnap = await getDocs(collection(db, `sales/${d.id}/items`));
+            await Promise.all(itemsSnap.docs.map(idoc => deleteDoc(idoc.ref)));
+          }
+          await deleteDoc(d.ref);
+        }
+        
+        const items = restoreData[collName];
+        for (const item of items) {
+           const { id, items: subItems, ...rest } = item;
+           // Ensure storeId mismatch doesn't happen on restore
+           await setDoc(doc(db, collName, id), { ...rest, storeId: userProfile.storeId });
+           if (collName === 'sales' && subItems) {
+              for (const subItem of subItems) {
+                 const { id: sId, ...sRest } = subItem;
+                 await setDoc(doc(db, `sales/${id}/items`, sId), { ...sRest, storeId: userProfile.storeId });
+              }
+           }
+        }
+      }
+      
+      createAuditLog('SYSTEM_RESTORE', 'Restauration complète des données effectuée.');
+      alert("Restauration réussie !");
+      window.location.reload();
+    } catch (e) {
+      console.error(e);
+      alert("Une erreur est survenue lors de la restauration.");
+    } finally {
+      setIsActionLoading(false);
+      setRestoreData(null);
+    }
+  };
+
+  const executeSystemReset = async () => {
+    if (!userProfile?.storeId) return;
+    setIsSyncing(true);
+    setIsActionLoading(true);
+    try {
+      const collectionsToEmpty = ['products', 'sales', 'expenses', 'auditLogs', 'employees', 'leaves', 'payroll', 'clients'];
+
+      for (const collName of collectionsToEmpty) {
+        const snap = await getDocs(query(collection(db, collName), where('storeId', '==', userProfile.storeId)));
+        for (const d of snap.docs) {
+          if (collName === 'sales') {
+            const itemsSnap = await getDocs(collection(db, `sales/${d.id}/items`));
+            for (const idoc of itemsSnap.docs) {
+              await deleteDoc(idoc.ref);
+            }
+          }
+          await deleteDoc(d.ref);
+        }
+      }
+
+      await createAuditLog('SYSTEM_RESET', 'Réinitialisation complète du système effectuée.');
+      alert("Application réinitialisée avec succès !");
+      window.location.reload();
+    } catch (err: any) {
+      console.error("Reset All Error:", err);
+      alert("Une erreur est survenue lors de la réinitialisation : " + (err.message || 'Erreur inconnue'));
+    } finally {
+      setIsSyncing(false);
+      setIsActionLoading(false);
+    }
+  };
+
+
+  const handleUpdateUserRole = async (uid: string, newRole: UserRole) => {
+    if (uid === auth.currentUser?.uid) {
+       alert("Vous ne pouvez pas changer votre propre rôle pour éviter de vous bloquer.");
+       return;
+    }
+    
+    try {
+      await updateDoc(doc(db, 'users', uid), { role: newRole });
+      await logAction(
+        userProfile?.storeId || '',
+        auth.currentUser?.uid || '',
+        userProfile?.displayName || '',
+        AuditAction.USER_ROLE_CHANGE,
+        `Rôle de l'utilisateur ${uid} mis à jour en ${newRole}.`,
+        { targetUid: uid, newRole }
+      );
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `users/${uid}`);
+    }
+  };
+
+  const handleUpdateUserPermissions = async (uid: string, permissions: UserPermissions) => {
+    try {
+      await updateDoc(doc(db, 'users', uid), { permissions });
+      createAuditLog('USER_PERMISSIONS_UPDATED', `Permissions de l'utilisateur ${uid} mises à jour.`);
+      alert("Permissions enregistrées !");
+      setEditingUser(null);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `users/${uid}`);
+    }
+  };
+
+  const handleToggleUserStatus = async (uid: string, currentStatus: boolean = true) => {
+    if (uid === auth.currentUser?.uid) {
+       alert("Vous ne pouvez pas désactiver votre propre compte.");
+       return;
+    }
+    
+    try {
+      await updateDoc(doc(db, 'users', uid), { isActive: !currentStatus });
+      await logAction(
+        userProfile?.storeId || '',
+        auth.currentUser?.uid || '',
+        userProfile?.displayName || '',
+        AuditAction.USER_STATUS_CHANGE,
+        `Statut de l'utilisateur ${uid} mis à jour : ${!currentStatus ? 'Actif' : 'Inactif'}.`,
+        { targetUid: uid, isActive: !currentStatus }
+      );
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `users/${uid}`);
+    }
+  };
+
+  const handleAdminResetPassword = async (email: string) => {
+    try {
+      await sendPasswordResetEmail(auth, email);
+      alert(`Email de réinitialisation envoyé à ${email} !`);
+      createAuditLog('ADMIN_PASS_RESET_TRIGGERED', `L'administrateur a déclenché une réinitialisation de mot de passe pour ${email}.`);
+    } catch (e: any) {
+      alert("Erreur lors de l'envoi de l'email : " + e.message);
+    }
+  };
+
+  const handleAddUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget as HTMLFormElement);
+    const email = formData.get('email') as string;
+    const name = formData.get('name') as string;
+    const password = formData.get('password') as string;
+    const role = formData.get('role') as UserRole;
+
+    if (!email || !name || !password) {
+      alert("Veuillez remplir tous les champs, y compris le mot de passe.");
+      return;
+    }
+
+    setIsSyncing(true);
+    let secondaryApp = null;
+    try {
+      // Create user using a secondary Firebase Auth instance to avoid signing out current admin
+      secondaryApp = initializeApp(config, 'Secondary');
+      const secondaryAuth = getAuth(secondaryApp);
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+      const uid = userCredential.user.uid;
+      
+      // Update Auth Profile
+      await updateProfile(userCredential.user, { displayName: name });
+
+      // Add to 'users' collection in main Firestore
+      await setDoc(doc(db, 'users', uid), {
+        uid,
+        email,
+        displayName: name,
+        role,
+        storeId: userProfile?.storeId,
+        permissions: defaultPermissions(),
+        isActive: true,
+        createdAt: serverTimestamp()
+      });
+
+      createAuditLog('USER_CREATED', `Utilisateur ${name} (${email}) créé avec accès direct.`);
+      setIsAddUserOpen(false);
+      alert(`Utilisateur ${name} créé avec succès ! Il peut maintenant se connecter.`);
+    } catch (e: any) {
+      console.error("Erreur création utilisateur:", e);
+      const errorCode = e.code || "";
+      const errorMessage = e.message || "";
+      
+      if (errorCode === 'auth/email-already-in-use' || errorMessage.includes('email-already-in-use')) {
+        alert("Cet email est déjà utilisé par un autre compte.");
+      } else if (errorCode === 'auth/weak-password' || errorMessage.includes('weak-password')) {
+        alert("Le mot de passe est trop faible (6 caractères min).");
+      } else {
+        // Only log to system error if it's not a known user error
+        alert("Erreur lors de la création de l'utilisateur: " + errorMessage);
+      }
+    } finally {
+      if (secondaryApp) {
+        try {
+          await deleteApp(secondaryApp);
+        } catch (delError) {
+          console.error("Erreur suppression secondaryApp:", delError);
+        }
+      }
+      setIsSyncing(false);
+    }
+  };
+
+  const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com';
+
+  const handleDeleteUser = async (uid: string) => {
+    const userToDelete = users.find(u => u.uid === uid);
+    const adminEmails = ['anges.gildas@gmail.com'];
+    
+    if (uid === auth.currentUser?.uid) {
+      alert("Vous ne pouvez pas vous supprimer vous-même.");
+      return;
+    }
+    if (userToDelete && adminEmails.includes(userToDelete.email)) {
+      alert("ATTENTION: Cet utilisateur est un administrateur système 'Bootstrap'. Sa suppression manuelle peut entraîner des recréations automatiques lors de sa prochaine connexion.");
+      if (!confirm("Voulez-vous vraiment continuer la suppression de cet administrateur système ?")) return;
+    }
+    
+    if (!isSuperAdmin && userRole !== 'admin' && userRole !== 'manager') {
+      alert("Permission de suppression refusée. Seuls les administrateurs et chefs peuvent supprimer des comptes.");
+      return;
+    }
+    
+    verifyAction(async () => {
+      try {
+        setIsActionLoading(true);
+        await deleteDoc(doc(db, 'users', uid));
+        await createAuditLog('USER_DELETED', `Utilisateur ${uid} supprimé.`);
+        alert("Utilisateur supprimé de la base de données avec succès !");
+      } catch (e: any) {
+        console.error("Delete User Error:", e);
+        alert("Erreur lors de la suppression : " + (e.message || 'Fermeture impossible'));
+      } finally {
+        setIsActionLoading(false);
+      }
+    });
+  };
+
+  const handleSaveStoreSettings = async () => {
+    if (!userProfile?.storeId) return;
+    try {
+      setIsActionLoading(true);
+      await setDoc(doc(db, 'storeSettings', userProfile.storeId), {
+        ...storeSettings,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      
+      await logAction(
+        userProfile.storeId,
+        auth.currentUser?.uid || '',
+        userProfile.displayName || '',
+        AuditAction.SETTINGS_UPDATE,
+        'Configuration de la boutique mise à jour.',
+        { settings: storeSettings }
+      );
+
+      alert('Informations de la boutique enregistrées avec succès !');
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `storeSettings/${userProfile.storeId}`);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Strict limit for base64 storage in Firestore (1MB document limit)
+    if (file.size > 500 * 1024) {
+      alert("Le fichier est trop volumineux pour être stocké directement (Max 500KB).");
+      return;
+    }
+
+    setIsUploading(true);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const img = new Image();
+      img.onload = () => {
+        // Create canvas for compression/resizing
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 300;
+        const MAX_HEIGHT = 300;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        
+        // Export as compressed JPEG or PNG
+        const compressedBase64 = canvas.toDataURL('image/png', 0.7);
+        setStoreSettings(prev => ({ ...prev!, logoUrl: compressedBase64 }));
+        setIsUploading(false);
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 200 * 1024) {
+      alert("La signature est trop volumineuse (Max 200KB).");
+      return;
+    }
+
+    setIsUploadingSignature(true);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setStoreSettings(prev => ({ ...prev!, signatureUrl: reader.result as string }));
+      setIsUploadingSignature(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleProfileUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget as HTMLFormElement);
+    const displayName = formData.get('displayName') as string;
+    const photoURL = formData.get('photoURL') as string;
+
+    if (!auth.currentUser) return;
+
+    try {
+      const updateData: any = { displayName };
+      
+      // Only update photoURL if it's not the placeholder for base64
+      if (photoURL !== 'Image enregistrée en base') {
+        updateData.photoURL = photoURL;
+      }
+      
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), updateData);
+
+      // Also try to update Auth profile (only non-base64 photoURL)
+      const authUpdate: any = { displayName };
+      if (photoURL && !photoURL.startsWith('data:') && photoURL !== 'Image enregistrée en base') {
+        authUpdate.photoURL = photoURL;
+      }
+      await updateProfile(auth.currentUser, authUpdate);
+
+      setShowSuccess(true);
+      createAuditLog('PROFILE_UPDATED', `Profil de ${displayName} mis à jour.`);
+      setTimeout(() => setShowSuccess(false), 5000);
+    } catch (e: any) {
+      handleFirestoreError(e, OperationType.UPDATE, 'profile');
+    }
+  };
+
+  const handleBackup = async () => {
+    if (!userProfile?.storeId) return;
+    setIsSyncing(true);
+    try {
+      const collectionsToExport = [
+        'products', 'sales', 'expenses', 'auditLogs', 
+        'employees', 'leaves', 'payroll', 'storeSettings'
+      ];
+
+      const backupData: any = {};
+      
+      for (const collName of collectionsToExport) {
+        let snap;
+        if (collName === 'storeSettings') {
+          const docRef = doc(db, 'storeSettings', userProfile.storeId);
+          const docSnap = await getDoc(docRef);
+          snap = { docs: docSnap.exists() ? [docSnap] : [] };
+        } else {
+          snap = await getDocs(query(collection(db, collName), where('storeId', '==', userProfile.storeId)));
+        }
+        backupData[collName] = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+        
+        // Export sales items subcollections
+        if (collName === 'sales') {
+          for (const sale of backupData.sales) {
+             const itemsSnap = await getDocs(collection(db, `sales/${sale.id}/items`));
+             sale.items = itemsSnap.docs.map(idoc => ({ ...idoc.data(), id: idoc.id }));
+          }
+        }
+      }
+
+      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `MarketPro_Backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      createAuditLog('BACKUP_CREATED', 'Export complet des données du système effectué.');
+      alert('Export réussi ! Le fichier de sauvegarde a été téléchargé.');
+    } catch (err) {
+      console.error(err);
+      alert("Erreur lors de l'export des données.");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const tabs = [
+    { id: 'store', label: isSuperAdmin ? 'Paramètres Système' : 'Boutique', icon: isSuperAdmin ? Globe : ShoppingBag, description: isSuperAdmin ? 'Configuration globale de l\'application et redirections.' : 'Configure store name, logo, address and contact.' },
+    { id: 'profile', label: t.profile, icon: User, description: 'Manage your personal information and avatar.' },
+    { id: 'security', label: t.security, icon: Shield, description: 'Configure 2FA and view active sessions.' },
+    { id: 'users', label: t.users, icon: Lock, description: 'Manage system users and their permissions.' },
+    { id: 'appearance', label: t.appearance, icon: Palette, description: 'Change theme and system language.' },
+    { id: 'backup', label: t.backup, icon: Database, description: 'Back up or restore your system data.' },
+    { id: 'audit', label: t.audit, icon: History, description: 'View system activity and security logs.' },
+    { id: 'license', label: 'Licence', icon: ShieldCheck, description: 'Manage system license and activation.' },
+    { id: 'about', label: t.about, icon: AlertCircle, description: 'System information and license status.' },
+  ];
+
+  const [activationSuccess, setActivationSuccess] = useState(false);
+
+  const handleUpdateLicense = (e: React.FormEvent) => {
+    e.preventDefault();
+    alert("Veuillez contacter le support Market pour activer ou renouveler votre licence. Email: admin@market.com");
+  };
+
+  return (
+    <div className="space-y-8 pb-10">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-4xl font-black tracking-tight text-gray-900">
+            {activeTab ? tabs.find(t => t.id === activeTab)?.label : t.settings}
+          </h1>
+          <p className="text-gray-500 font-medium font-sans">
+            {activeTab ? tabs.find(t => t.id === activeTab)?.description : 'Manage your system preferences and security.'}
+          </p>
+        </div>
+        {activeTab && (
+          <button 
+            onClick={() => setActiveTab(null)}
+            className="px-6 py-3 bg-gray-100 text-gray-900 rounded-2xl font-black text-sm hover:bg-gray-200 transition-all flex items-center gap-2"
+          >
+            <X size={18} />
+            Retour
+          </button>
+        )}
+      </div>
+
+      <AnimatePresence mode="wait">
+        {!activeTab ? (
+          <motion.div 
+            key="menu"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+          >
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className="group bg-white p-8 rounded-[40px] border border-gray-100 shadow-sm text-left hover:border-orange-500 hover:shadow-2xl hover:shadow-gray-200/50 transition-all flex flex-col h-full"
+              >
+                <div className="w-14 h-14 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-400 mb-6 group-hover:bg-orange-500 group-hover:text-white transition-all shadow-sm">
+                  <tab.icon size={28} />
+                </div>
+                <div className="flex items-center gap-3 mb-2">
+                  <h3 className="text-xl font-black text-gray-900">{tab.label}</h3>
+                  {(tab.id === 'security' || tab.id === 'users') && !verifiedTabs.includes(tab.id) && (
+                    <div className="p-1.5 bg-orange-50 rounded-lg text-orange-500 animate-pulse">
+                      <Lock size={12} />
+                    </div>
+                  )}
+                </div>
+                <p className="text-sm text-gray-500 font-medium leading-relaxed">{tab.description}</p>
+                <div className="mt-auto pt-6 flex items-center gap-2 text-orange-500 font-black text-xs uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all">
+                  Ouvrir <ArrowRight size={14} />
+                </div>
+              </button>
+            ))}
+          </motion.div>
+        ) : (
+          <motion.div
+            key="content"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="bg-white p-8 lg:p-12 rounded-[48px] shadow-2xl shadow-gray-200/50 border border-white/50"
+          >
+            {(activeTab === 'security' || activeTab === 'users') && !verifiedTabs.includes(activeTab) ? (
+              <div className="h-[50vh] flex flex-col items-center justify-center text-center space-y-8">
+                <div className="w-24 h-24 bg-orange-50 rounded-[36px] flex items-center justify-center text-orange-500 shadow-2xl shadow-orange-500/10 transition-transform hover:scale-110">
+                  <Lock size={48} />
+                </div>
+                <div className="space-y-2">
+                   <h3 className="text-3xl font-black text-gray-900 tracking-tighter uppercase italic">Section Sécurisée</h3>
+                   <p className="text-gray-500 font-medium max-w-xs mx-auto italic">Veuillez saisir votre mot de passe de sécurité pour accéder à ces réglages sensibles.</p>
+                </div>
+                <button 
+                  onClick={() => checkMasterPassword('NAVIGATE', activeTab)}
+                  className="px-12 py-5 bg-orange-500 text-white rounded-[24px] font-black uppercase tracking-widest text-[11px] hover:bg-orange-600 transition-all shadow-xl shadow-orange-500/30 active:scale-95 flex items-center gap-3"
+                >
+                  <Shield size={16} />
+                  Déverrouiller l'accès
+                </button>
+              </div>
+            ) : (
+              <>
+            {activeTab === 'store' && (
+              <div className="space-y-12">
+                <div className="flex flex-col sm:flex-row items-center gap-8">
+                  <div className="relative group">
+                    <div className="w-40 h-40 rounded-[48px] bg-gray-50 flex items-center justify-center text-gray-300 border-4 border-white shadow-2xl relative overflow-hidden transition-all hover:scale-105">
+                      {storeSettings?.logoUrl ? (
+                        <div className="relative w-full h-full">
+                          <img src={storeSettings.logoUrl} alt="Logo" className="w-full h-full object-cover" />
+                          <button 
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setStoreSettings(prev => ({ ...prev!, logoUrl: undefined }));
+                            }}
+                            className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-full shadow-lg hover:bg-red-600 transition-colors"
+                            title="Supprimer le logo"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      ) : (
+                        <ShoppingBag size={56} />
+                      )}
+                      
+                      {isUploading && (
+                        <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center">
+                          <RefreshCcw size={32} className="text-orange-500 animate-spin" />
+                        </div>
+                      )}
+
+                      <label className="absolute inset-0 bg-gray-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center backdrop-blur-sm cursor-pointer text-center">
+                        <Upload size={32} className="text-white mb-2" />
+                        <span className="text-[10px] text-white font-black uppercase tracking-widest px-4 leading-tight">Changer le Logo</span>
+                        <input type="file" className="hidden" accept="image/*" onChange={handleLogoUpload} />
+                      </label>
+                    </div>
+                  </div>
+                  <div className="text-center sm:text-left">
+                    <h3 className="text-4xl font-black text-gray-900 mb-2">{storeSettings?.name || 'SuperMarket Pro'}</h3>
+                    <p className="text-gray-500 font-medium max-w-sm">C'est ici que vous gérez l'identité de votre commerce. Le logo apparaîtra sur vos reçus thermiques.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-2">Nom commercial</label>
+                    <input 
+                      type="text" 
+                      placeholder=""
+                      value={storeSettings?.name} 
+                      onChange={e => setStoreSettings(prev => ({ ...prev!, name: e.target.value }))}
+                      className="w-full px-8 py-6 bg-gray-50 border-2 border-transparent rounded-[32px] font-black text-gray-900 focus:bg-white focus:border-orange-500/20 focus:ring-4 focus:ring-orange-500/5 transition-all outline-none" 
+                    />
+                  </div>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-2">URL du Logo</label>
+                    <input 
+                      type="text" 
+                      placeholder=""
+                      value={storeSettings?.logoUrl || ''} 
+                      onChange={e => setStoreSettings(prev => ({ ...prev!, logoUrl: e.target.value }))}
+                      className="w-full px-8 py-6 bg-gray-50 border-2 border-transparent rounded-[32px] font-black text-gray-900 focus:bg-white focus:border-orange-500/20 transition-all outline-none" 
+                    />
+                  </div>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-2">Adresse de la Boutique</label>
+                    <input 
+                      type="text" 
+                      placeholder=""
+                      value={storeSettings?.address} 
+                      onChange={e => setStoreSettings(prev => ({ ...prev!, address: e.target.value }))}
+                      className="w-full px-8 py-6 bg-gray-50 border-2 border-transparent rounded-[32px] font-black text-gray-900 focus:bg-white focus:border-orange-500/20 transition-all outline-none" 
+                    />
+                  </div>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-2">Téléphone / Contact</label>
+                    <input 
+                      type="text" 
+                      placeholder=""
+                      value={storeSettings?.phone} 
+                      onChange={e => setStoreSettings(prev => ({ ...prev!, phone: e.target.value }))}
+                      className="w-full px-8 py-6 bg-gray-50 border-2 border-transparent rounded-[32px] font-black text-gray-900 focus:bg-white focus:border-orange-500/20 transition-all outline-none" 
+                    />
+                  </div>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-2">Signature du Responsable (Upload)</label>
+                    <div className="relative group">
+                       <div className="w-full h-32 bg-gray-50 rounded-[32px] border-2 border-dashed border-gray-200 flex flex-col items-center justify-center overflow-hidden">
+                          {storeSettings?.signatureUrl ? (
+                            <img src={storeSettings.signatureUrl} alt="Signature" className="h-full w-full object-contain" />
+                          ) : (
+                            <div className="text-center p-4">
+                               <Plus className="mx-auto text-gray-300 mb-2" size={24} />
+                               <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest leading-tight">Cliquer pour charger une image de signature</p>
+                            </div>
+                          )}
+                          <label className="absolute inset-0 bg-gray-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm cursor-pointer">
+                             <Upload size={20} className="text-white" />
+                             <input type="file" className="hidden" accept="image/*" onChange={handleSignatureUpload} />
+                          </label>
+                       </div>
+                       {isUploadingSignature && (
+                         <div className="absolute inset-0 bg-white/50 flex items-center justify-center">
+                            <RefreshCcw size={20} className="text-orange-500 animate-spin" />
+                         </div>
+                       )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-6">
+                  <button 
+                    onClick={() => checkMasterPassword('SAVE_STORE')}
+                    className="w-full sm:w-auto px-12 py-6 bg-orange-500 text-white rounded-[32px] font-black text-lg hover:bg-orange-600 transition-all shadow-2xl shadow-orange-500/30 active:scale-95"
+                  >
+                    Enregistrer les Modifications
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'about' && (
+              <div className="space-y-10">
+                <div className="flex flex-col items-center text-center space-y-6">
+                  <div className="bg-orange-500 w-24 h-24 rounded-[36px] shadow-2xl shadow-orange-500/20 transform rotate-3 hover:rotate-0 transition-transform overflow-hidden flex items-center justify-center">
+                    {storeSettings?.logoUrl ? (
+                      <img src={storeSettings.logoUrl} alt="Logo" className="w-full h-full object-cover" />
+                    ) : (
+                      <ShoppingBag size={48} className="text-white" />
+                    )}
+                  </div>
+                  <div>
+                    <h2 className="text-4xl font-black text-gray-900 tracking-tighter italic">MARKET PRO</h2>
+                    <p className="text-orange-500 font-black uppercase tracking-[0.3em] text-[10px] mt-2 italic">Professional Business Suite</p>
+                  </div>
+                </div>
+ 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="p-8 bg-gray-50 rounded-[32px] border border-gray-100/50">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{t.version}</p>
+                    <p className="text-xl font-bold text-gray-900">v1.2.0-PRO</p>
+                  </div>
+                  <div className="p-8 bg-gray-50 rounded-[32px] border border-gray-100/50">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{t.license}</p>
+                    <div className="flex items-center gap-2">
+                       <div className={`w-2.5 h-2.5 rounded-full ${storeSettings?.licenseStatus === 'active' ? 'bg-green-500 shadow-green-500/50' : 'bg-red-500 shadow-red-500/50'} shadow-lg animate-pulse`} />
+                       <p className={`text-xl font-black uppercase tracking-tighter ${storeSettings?.licenseStatus === 'active' ? 'text-green-600' : 'text-red-600'}`}>
+                         {storeSettings?.licenseStatus === 'active' ? t.active : 'INACTIF'}
+                       </p>
+                    </div>
+                  </div>
+                  <div className="p-8 bg-gray-50 rounded-[32px] border border-gray-100/50">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Statut du Système</p>
+                    <p className={`text-xl font-bold ${storeSettings?.systemStatus ? 'text-orange-500' : 'text-gray-900'}`}>
+                      {storeSettings?.systemStatus || 'Service Standard'}
+                    </p>
+                  </div>
+                  <div className="p-8 bg-gray-50 rounded-[32px] border border-gray-100/50">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Engine</p>
+                    <p className="text-sm font-bold text-gray-900">Google Cloud Firestore v2</p>
+                  </div>
+                </div>
+ 
+                <div className="pt-8 border-t border-gray-100 text-center">
+                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">© 2026 {t.app_name} Solutions • Clé: {storeSettings?.licenseStatus === 'active' ? 'G-TECH-XXXX-XXXX-XXXX' : (storeSettings?.licenseKey || 'N/A')}</p>
+                   <p className="text-[9px] font-black text-orange-500 uppercase tracking-[0.2em] mt-2">SUPPORT: G-TECH LAB SOLUTION • ANGES.GILDAS@GMAIL.COM / +228 91 03 30 04</p>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'appearance' && (
+              <div className="space-y-12">
+                <div>
+                   <h4 className="text-2xl font-black text-gray-900 mb-8">{t.language}</h4>
+                   <div className="grid grid-cols-2 gap-4">
+                      {[
+                        { id: 'fr', label: t.french, sub: 'Français' },
+                        { id: 'en', label: t.english, sub: 'English' }
+                      ].map(lang => (
+                        <button 
+                          key={lang.id}
+                          onClick={() => setLanguage(lang.id as Language)}
+                          className={`flex items-center justify-between p-6 rounded-[32px] border-2 transition-all ${language === lang.id ? 'border-orange-500 bg-orange-50 shadow-lg shadow-orange-500/10' : 'border-gray-100 hover:border-gray-200'}`}
+                        >
+                           <div className="flex items-center gap-4">
+                              <div className={`p-3 rounded-2xl ${language === lang.id ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                                <Globe size={20} />
+                              </div>
+                              <div className="text-left">
+                                <p className={`font-black ${language === lang.id ? 'text-orange-900' : 'text-gray-900'}`}>{lang.label}</p>
+                                <p className="text-[10px] uppercase font-bold text-gray-400 tracking-widest">{lang.sub}</p>
+                              </div>
+                           </div>
+                           {language === lang.id && <div className="w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center text-white"><Check size={14} /></div>}
+                        </button>
+                      ))}
+                   </div>
+                </div>
+
+                <div>
+                   <h4 className="text-2xl font-black text-gray-900 mb-8">Thème du Système</h4>
+                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-6">
+                      {[
+                        { id: 'default', label: 'Défaut', color: 'bg-white' },
+                        { id: 'white', label: 'Blanc Pur', color: 'bg-white shadow-inner' },
+                        { id: 'black', label: 'Noir Profond', color: 'bg-gray-900' },
+                        { id: 'dark-gray', label: 'Gris Sombre', color: 'bg-gray-600' },
+                        { id: 'light-blue', label: 'Bleu Clair', color: 'bg-sky-100' },
+                        { id: 'dark-blue', label: 'Bleu Foncé', color: 'bg-blue-900' },
+                      ].map(mode => (
+                        <button 
+                          key={mode.id} 
+                          onClick={() => setTheme(mode.id as Theme)}
+                          className={`flex flex-col items-center gap-4 p-6 rounded-[32px] border-2 transition-all group ${theme === mode.id ? 'border-orange-500 bg-orange-50' : 'border-gray-100 hover:border-gray-200'}`}
+                        >
+                           <div className={`w-full aspect-square rounded-2xl ${mode.color} transition-transform group-hover:scale-105`} />
+                           <span className="font-black text-gray-900 text-[10px] uppercase tracking-widest">{mode.label}</span>
+                        </button>
+                      ))}
+                   </div>
+                </div>
+              </div>
+            )}
+            
+            {activeTab === 'profile' && (
+              <div className="space-y-8">
+                <AnimatePresence>
+                  {showSuccess && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      className="p-4 bg-green-50 text-green-700 rounded-2xl border border-green-100 font-bold text-sm text-center shadow-xl shadow-green-500/10 mb-4"
+                    >
+                      Profils mis à jour avec succès !
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <div className="flex items-center gap-8">
+                  <div className="relative group">
+                    <div className="w-32 h-32 rounded-[40px] bg-gray-100 flex items-center justify-center text-gray-400 border-4 border-white shadow-2xl relative overflow-hidden transition-all hover:scale-105">
+                      {userProfile?.photoURL ? (
+                        <img src={userProfile.photoURL} alt="Avatar" className="w-full h-full object-cover" />
+                      ) : (
+                        <User size={48} />
+                      )}
+                      
+                      <label className="absolute inset-0 bg-gray-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center backdrop-blur-sm cursor-pointer text-center">
+                        <Upload size={24} className="text-white mb-2" />
+                        <span className="text-[8px] text-white font-black uppercase tracking-widest px-4 leading-tight">Changer la Photo</span>
+                        <input type="file" className="hidden" accept="image/*" onChange={handleProfilePhotoUpload} />
+                      </label>
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="text-3xl font-black text-gray-900 leading-tight">{auth.currentUser?.displayName || 'Utilisateur'}</h3>
+                    <p className="text-gray-500 font-medium font-sans">{auth.currentUser?.email}</p>
+                    <div className="mt-2 flex items-center gap-2">
+                       <span className="px-3 py-1 bg-gray-900 text-white text-[9px] font-black uppercase tracking-widest rounded-full">{userRole}</span>
+                       {isSuperAdmin && (
+                         <span className="px-3 py-1 bg-orange-500 text-white text-[9px] font-black uppercase tracking-widest rounded-full shadow-lg shadow-orange-500/20">Super Admin</span>
+                       )}
+                    </div>
+                  </div>
+                </div>
+
+                <form onSubmit={handleProfileUpdate} className="space-y-8 mt-10">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Nom Complet</label>
+                      <input 
+                        name="displayName"
+                        type="text" 
+                        defaultValue={auth.currentUser?.displayName || ''} 
+                        className="w-full px-6 py-5 bg-gray-50 border-none rounded-[24px] font-bold text-gray-900 focus:ring-4 focus:ring-orange-500/5 transition-all outline-none" 
+                      />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Photo URL (Lien externe)</label>
+                      <input 
+                        name="photoURL"
+                        type="text" 
+                        defaultValue={userProfile?.photoURL?.startsWith('data:') ? 'Image enregistrée en base' : userProfile?.photoURL || ''} 
+                        readOnly={userProfile?.photoURL?.startsWith('data:')}
+                        placeholder="https://images.com/avatar.jpg"
+                        className={`w-full px-6 py-5 bg-gray-50 border-none rounded-[24px] font-bold text-gray-900 focus:ring-4 focus:ring-orange-500/5 transition-all outline-none ${userProfile?.photoURL?.startsWith('data:') ? 'opacity-50 cursor-not-allowed' : ''}`} 
+                      />
+                      {userProfile?.photoURL?.startsWith('data:') && (
+                        <p className="text-[9px] text-orange-500 font-bold ml-4">Une photo a été téléchargée manuellement. Cliquez sur l'avatar pour la changer.</p>
+                      )}
+                    </div>
+                  </div>
+                  <button 
+                    type="submit"
+                    className="px-10 py-5 bg-gray-900 text-white rounded-[24px] font-black text-lg hover:bg-black transition-all shadow-2xl shadow-gray-300"
+                  >
+                    Enregistrer les Modifications
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {activeTab === 'security' && (
+              <div className="space-y-10">
+                <div className="flex items-center justify-between p-8 bg-gray-50 rounded-[40px] border border-gray-100">
+                  <div className="flex items-center gap-6">
+                    <div className="p-4 bg-white rounded-3xl text-orange-500 shadow-xl shadow-gray-200/50"><Lock size={24} /></div>
+                    <div>
+                      <h4 className="font-black text-gray-900 text-lg">Two-Factor Authentication</h4>
+                      <p className="text-sm text-gray-500 font-medium">Add an extra layer of security to your account.</p>
+                    </div>
+                  </div>
+                  <button className="px-6 py-3 bg-orange-100 text-orange-600 rounded-2xl font-black text-sm hover:bg-orange-200 transition-colors">ENABLE</button>
+                </div>
+
+                {/* Support/Forgot Password Help */}
+                <div className="p-8 bg-orange-50 rounded-[40px] border border-orange-100 flex flex-col sm:flex-row items-center justify-between gap-6">
+                   <div className="flex items-center gap-6">
+                      <div className="p-4 bg-white rounded-3xl text-orange-500 shadow-xl shadow-orange-500/20"><AlertCircle size={24} /></div>
+                      <div>
+                        <h4 className="font-black text-gray-900 text-lg">Aide & Sécurité</h4>
+                        <p className="text-sm text-gray-500 font-medium">Réinitialisez votre mot de passe d'accès ou celui des paramètres.</p>
+                      </div>
+                   </div>
+                   <div className="flex flex-col sm:flex-row gap-3">
+                     <button 
+                       onClick={async () => {
+                         if (auth.currentUser?.email) {
+                           try {
+                             await sendPasswordResetEmail(auth, auth.currentUser.email);
+                             alert(`Email de réinitialisation envoyé à ${auth.currentUser.email} !`);
+                           } catch (e: any) {
+                             alert("Erreur: " + e.message);
+                           }
+                         }
+                       }}
+                       className="px-8 py-4 bg-orange-500 text-white rounded-[24px] font-black text-[10px] uppercase tracking-widest shadow-xl shadow-orange-500/20 hover:bg-orange-600 transition-all flex items-center gap-2"
+                     >
+                       <Mail size={16} />
+                       Réinitialiser mon compte
+                     </button>
+                     <button 
+                       onClick={() => setIsSetPasswordOpen(true)}
+                       className="px-8 py-4 bg-white text-orange-600 border border-orange-200 rounded-[24px] font-black text-[10px] uppercase tracking-widest hover:bg-orange-50 transition-all flex items-center gap-2"
+                     >
+                       <Lock size={16} />
+                       Changer code paramètres
+                     </button>
+                   </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'users' && (
+              <div className="space-y-12">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
+                  <div>
+                    <h3 className="text-4xl font-black text-gray-900 mb-2">Annuaire Utilisateurs</h3>
+                    <p className="text-gray-500 font-medium">Gérez les accès et les permissions de votre équipe.</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="bg-orange-50 px-4 py-2 rounded-xl text-orange-600 font-black text-[10px] uppercase tracking-widest border border-orange-100">
+                      {users.length} Utilisateurs Actifs
+                    </div>
+                    {userRole === 'admin' && (
+                      <button 
+                        onClick={() => checkMasterPassword('ADD_USER')}
+                        className="bg-orange-500 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-orange-600 transition-all shadow-xl shadow-orange-500/20 active:scale-95"
+                      >
+                        <UserPlus size={16} />
+                        Ajouter
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-gray-900 p-8 rounded-[40px] text-white flex items-center justify-between shadow-2xl shadow-gray-300">
+                   <div className="flex items-center gap-6">
+                      <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center text-orange-500">
+                         <Shield size={28} />
+                      </div>
+                      <div>
+                         <p className="text-sm font-bold opacity-60">Votre Niveau d'Accès</p>
+                         <p className="text-xl font-black tracking-widest uppercase">{userRole}</p>
+                      </div>
+                   </div>
+                   {userRole === 'admin' && (
+                      <div className="hidden sm:block px-6 py-2 bg-white/10 rounded-xl text-[10px] font-bold uppercase tracking-widest border border-white/10">
+                        Privilèges Administrateur Actifs
+                      </div>
+                   )}
+                </div>
+
+                <div className="space-y-4">
+                   {users.map(u => (
+                     <div key={u.uid} className="flex flex-col bg-white rounded-[32px] border border-gray-100 hover:shadow-xl transition-all group overflow-hidden">
+                        <div className="flex flex-col lg:flex-row items-center justify-between p-6 gap-6">
+                           <div className="flex items-center gap-4 w-full lg:w-auto">
+                              <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-400 font-black text-lg overflow-hidden border border-gray-100">
+                                 {u.photoURL ? (
+                                   <img src={u.photoURL} alt="Avatar" className="w-full h-full object-cover" />
+                                 ) : (
+                                   u.displayName ? u.displayName[0] : <User size={20} />
+                                 )}
+                              </div>
+                              <div className="flex flex-col">
+                                <div className="flex items-center gap-2">
+                                  <p className="font-black text-gray-900">{u.displayName || 'Utilisateur Anonyme'}</p>
+                                  {u.isActive === false && (
+                                    <span className="bg-red-50 text-red-500 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest border border-red-100">Désactivé</span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-400 font-medium">{u.email}</p>
+                                <div className="mt-1 flex items-center gap-1">
+                                   <span className={`px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-widest ${u.role === 'admin' ? 'bg-orange-500 text-white' : u.role === 'manager' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                                     {u.role}
+                                   </span>
+                                </div>
+                              </div>
+                           </div>
+
+                           {/* DETAILED ACCESS MATRIX */}
+                           <div 
+                             onClick={() => setEditingUser(u)}
+                             className="flex flex-wrap gap-1.5 justify-center lg:justify-end flex-1 cursor-pointer hover:bg-gray-50 p-2 rounded-2xl transition-colors group/matrix"
+                             title="Cliquer pour modifier les permissions"
+                           >
+                              {(['pos', 'inventory', 'accounting', 'reports', 'personnel', 'settings'] as (keyof UserPermissions)[]).map(m => {
+                                const permissions = u.permissions?.[m] || { read: false, create: false, update: false, delete: false };
+                                const hasAccess = permissions.read || permissions.create || permissions.update || permissions.delete;
+                                return (
+                                  <div key={m} className={`p-2 rounded-xl border flex flex-col items-center gap-1 transition-all ${hasAccess ? 'bg-white border-orange-100 shadow-sm' : 'bg-gray-50/50 border-transparent opacity-20'}`}>
+                                    <span className="text-[7px] font-black uppercase tracking-tighter text-gray-400">
+                                      {m === 'pos' ? 'Vente' : m === 'inventory' ? 'Stock' : m === 'accounting' ? 'Compta' : m === 'reports' ? 'Rapports' : m === 'personnel' ? 'Equipe' : 'Config'}
+                                    </span>
+                                    <div className="flex gap-1 items-center">
+                                      <div className={`w-5 h-5 rounded-full flex items-center justify-center ${permissions.read ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-gray-100 text-gray-300'}`} title="Lecture">
+                                        <Eye size={12} />
+                                      </div>
+                                      <div className="flex gap-0.5">
+                                        <div className={`w-2.5 h-2.5 rounded-full border border-white ${permissions.create ? 'bg-blue-500 shadow-sm' : 'bg-gray-200'}`} title="Création" />
+                                        <div className={`w-2.5 h-2.5 rounded-full border border-white ${permissions.update ? 'bg-yellow-500 shadow-sm' : 'bg-gray-200'}`} title="Modification" />
+                                        <div className={`w-2.5 h-2.5 rounded-full border border-white ${permissions.delete ? 'bg-red-500 shadow-sm' : 'bg-gray-200'}`} title="Suppression" />
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                           </div>
+                           
+                           <div className="flex items-center gap-4 w-full lg:w-auto justify-end">
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => checkMasterPassword('TOGGLE_STATUS', { uid: u.uid, isActive: u.isActive !== false })}
+                                  disabled={u.uid === auth.currentUser?.uid}
+                                  className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${u.isActive !== false ? 'bg-green-50 text-green-600 border border-green-100 hover:bg-green-500 hover:text-white' : 'bg-red-50 text-red-600 border border-red-100 hover:bg-red-500 hover:text-white'} disabled:opacity-30`}
+                                >
+                                  {u.isActive !== false ? 'Actif' : 'Bloqué'}
+                                </button>
+                                <div className="flex items-center bg-gray-50 p-1 rounded-2xl border border-gray-100">
+                                 {(['admin', 'cashier', 'manager'] as UserRole[]).map(r => (
+                                   <button
+                                     key={r}
+                                     disabled={userRole !== 'admin' || (u.uid === auth.currentUser?.uid)}
+                                     onClick={() => checkMasterPassword('UPDATE_ROLE', { uid: u.uid, role: r })}
+                                     className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${u.role === r ? 'bg-white text-orange-500 shadow-sm border border-gray-100' : 'text-gray-400 hover:text-gray-600'}`}
+                                   >
+                                     {r === 'admin' ? 'Admin' : r === 'manager' ? 'Chef' : 'Caiss'}
+                                   </button>
+                                 ))}
+                                </div>
+                              </div>
+                              
+                              <div className="flex items-center gap-2">
+                                 <button 
+                                   onClick={() => checkMasterPassword('RESET_USER_PASS', { email: u.email })}
+                                   className="p-3 rounded-2xl bg-orange-50 text-orange-500 hover:bg-orange-500 hover:text-white transition-all shadow-sm group"
+                                   title="Réinitialiser le mot de passe par Email"
+                                 >
+                                   <Mail size={20} className="group-hover:rotate-12 transition-transform" />
+                                 </button>
+                                 <button 
+                                   onClick={() => setEditingUser(editingUser?.uid === u.uid ? null : u)}
+                                   className={`p-3 rounded-2xl transition-all ${editingUser?.uid === u.uid ? 'bg-orange-500 text-white shadow-xl shadow-orange-500/20' : 'bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-900'}`}
+                                   title="Gérer les permissions"
+                                 >
+                                   <Shield size={20} />
+                                 </button>
+                                 {(userRole === 'admin' || userRole === 'manager') && u.uid !== auth.currentUser?.uid && (
+                                   <button 
+                                     onClick={() => checkMasterPassword('DELETE_USER', u.uid)}
+                                     className="p-3 rounded-2xl bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                                     title="Supprimer l'utilisateur"
+                                   >
+                                     <Trash2 size={20} />
+                                   </button>
+                                 )}
+                              </div>
+                           </div>
+                        </div>
+
+                        {/* Permissions Modal MODERNIZED */}
+                        <AnimatePresence>
+                          {editingUser && (
+                            <div className="fixed inset-0 z-[60] flex items-center justify-center p-0 sm:p-4">
+                              <motion.div 
+                                initial={{ opacity: 0 }} 
+                                animate={{ opacity: 1 }} 
+                                exit={{ opacity: 0 }}
+                                className="absolute inset-0 bg-black/80 backdrop-blur-md" 
+                                onClick={() => setEditingUser(null)} 
+                              />
+                              <motion.div 
+                                initial={{ opacity: 0, y: 100, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 100, scale: 0.95 }}
+                                className="relative bg-white w-full h-full sm:h-auto sm:max-w-2xl sm:rounded-[32px] shadow-2xl overflow-hidden flex flex-col"
+                              >
+                                <div className="p-6 sm:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                                  <div>
+                                    <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase decoration-orange-500 decoration-4 underline-offset-4 tracking-tighter">Permissions</h2>
+                                    <p className="text-gray-500 font-bold italic text-[11px] mt-1.5 uppercase tracking-tighter">Accès de <span className="text-orange-600 font-black">{editingUser.displayName || editingUser.email}</span></p>
+                                  </div>
+                                  <button onClick={() => setEditingUser(null)} className="p-2 hover:bg-white hover:shadow-lg rounded-full transition-all group">
+                                    <X size={20} className="text-gray-300 group-hover:text-gray-900" />
+                                  </button>
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto p-6 sm:p-8 max-h-[65vh] scrollbar-thin scrollbar-thumb-gray-200">
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                     {(['pos', 'inventory', 'accounting', 'settings', 'reports', 'personnel', 'clients', 'sales'] as (keyof UserPermissions)[]).map(module => (
+                                       <div key={module} className="bg-gray-50 p-6 rounded-[28px] border border-gray-100 hover:border-orange-500/20 transition-colors">
+                                          <div className="flex items-center justify-between mb-4">
+                                             <div className="flex items-center gap-2.5">
+                                                <div className="w-8 h-8 bg-white rounded-xl flex items-center justify-center text-gray-400 group-hover:text-orange-500 transition-colors shadow-sm">
+                                                   <Shield size={16} />
+                                                </div>
+                                                <span className="text-[11px] font-black uppercase tracking-widest text-gray-900">{module}</span>
+                                             </div>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-2.5">
+                                             {[
+                                               { key: 'read', icon: Eye, label: 'Lecture' },
+                                               { key: 'create', icon: Plus, label: 'Ajout' },
+                                               { key: 'update', icon: Edit3, label: 'Modif.' },
+                                               { key: 'delete', icon: Trash2, label: 'Suppr.' }
+                                             ].map(action => {
+                                               const isActive = editingUser.permissions?.[module]?.[action.key as keyof ModulePermissions];
+                                               return (
+                                                 <button
+                                                   key={action.key}
+                                                   onClick={() => {
+                                                     const newPermissions = {
+                                                       ...(editingUser.permissions || defaultPermissions()),
+                                                       [module]: {
+                                                         ...(editingUser.permissions?.[module] || defaultPermissions()[module]),
+                                                         [action.key]: !isActive
+                                                       }
+                                                     };
+                                                     setEditingUser({ ...editingUser, permissions: newPermissions });
+                                                   }}
+                                                   className={`p-3 rounded-xl transition-all flex items-center gap-2 border ${isActive ? 'bg-orange-500 border-orange-500 text-white shadow-xl shadow-orange-500/10' : 'bg-white border-gray-100 text-gray-400 hover:bg-gray-50'}`}
+                                                 >
+                                                   <action.icon size={18} />
+                                                   <span className="text-[10px] font-black uppercase tracking-widest">{action.label}</span>
+                                                 </button>
+                                               );
+                                             })}
+                                          </div>
+                                       </div>
+                                     ))}
+                                  </div>
+                                </div>
+
+                                <div className="p-6 sm:p-8 bg-gray-50/50 border-t border-gray-100 flex flex-col sm:flex-row gap-3">
+                                  <button 
+                                    onClick={() => setEditingUser(null)}
+                                    className="flex-1 py-4 bg-white text-gray-900 rounded-2xl font-black uppercase tracking-widest text-[10px] border border-gray-200 hover:bg-gray-50 transition-all active:scale-95"
+                                  >
+                                    Fermer
+                                  </button>
+                                  <button 
+                                    onClick={() => checkMasterPassword('UPDATE_PERMISSIONS', { uid: editingUser.uid, permissions: editingUser.permissions || defaultPermissions() })}
+                                    className="flex-[2] py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-black hover:shadow-2xl hover:shadow-gray-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                                  >
+                                    <Check size={16} />
+                                    Enregistrer
+                                  </button>
+                                </div>
+                              </motion.div>
+                            </div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    ))}
+                 </div>
+
+                 <AnimatePresence>
+                   {isAddUserOpen && (
+                     <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
+                       <motion.div 
+                         initial={{ opacity: 0 }} 
+                         animate={{ opacity: 1 }} 
+                         exit={{ opacity: 0 }}
+                         className="absolute inset-0 bg-black/60 backdrop-blur-sm" 
+                         onClick={() => setIsAddUserOpen(false)} 
+                       />
+                       <motion.div 
+                         initial={{ opacity: 0, y: 100, scale: 0.95 }}
+                         animate={{ opacity: 1, y: 0, scale: 1 }}
+                         exit={{ opacity: 0, y: 100, scale: 0.95 }}
+                         className="relative bg-white w-full h-full sm:h-auto sm:max-w-md sm:rounded-[28px] shadow-2xl overflow-hidden flex flex-col"
+                       >
+                         <div className="p-6 sm:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                           <div>
+                             <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase decoration-orange-500 decoration-4 underline-offset-4 font-sans tracking-tighter">Nouveau</h2>
+                             <p className="text-gray-500 font-bold italic text-[11px] mt-1.5 uppercase tracking-tighter">Créer un membre de l'équipe.</p>
+                           </div>
+                           <button onClick={() => setIsAddUserOpen(false)} className="p-2 hover:bg-white hover:shadow-lg rounded-full transition-all group">
+                             <X size={20} className="text-gray-300 group-hover:text-gray-900" />
+                           </button>
+                         </div>
+
+                         <form onSubmit={handleAddUser} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
+                           <div className="space-y-4">
+                             <div className="space-y-1.5">
+                               <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Nom Complet</label>
+                               <input 
+                                 name="name" 
+                                 required
+                                 className="w-full px-5 py-3 bg-gray-50 border-none rounded-xl font-bold text-gray-900 focus:bg-white focus:ring-4 focus:ring-orange-500/5 transition-all outline-none text-sm" 
+                                 placeholder=""
+                               />
+                             </div>
+                              <div className="space-y-1.5">
+                                <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Adresse Email</label>
+                                <input 
+                                  name="email" 
+                                  type="email"
+                                  required
+                                  className="w-full px-5 py-3 bg-gray-50 border-none rounded-xl font-bold text-gray-900 focus:bg-white focus:ring-4 focus:ring-orange-500/5 transition-all outline-none text-sm" 
+                                  placeholder="exemple@market.com"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Mot de Passe d'Accès</label>
+                                <input 
+                                  name="password" 
+                                  type="password"
+                                  required
+                                  minLength={6}
+                                  className="w-full px-5 py-3 bg-gray-50 border-none rounded-xl font-bold text-gray-900 focus:bg-white focus:ring-4 focus:ring-orange-500/5 transition-all outline-none text-sm" 
+                                  placeholder="••••••••"
+                                />
+                              </div>
+                             <div className="space-y-3">
+                               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-2">Rôle Initial</label>
+                               <select 
+                                 name="role"
+                                 className="w-full px-8 py-5 bg-gray-50 border-none rounded-[28px] font-bold text-gray-900 focus:bg-white focus:ring-8 focus:ring-orange-500/5 transition-all outline-none appearance-none"
+                               >
+                                 <option value="cashier">Caissier</option>
+                                 <option value="manager">Gérant / Chef</option>
+                                 <option value="admin">Administrateur</option>
+                               </select>
+                             </div>
+                           </div>
+
+                           <div className="flex flex-col sm:flex-row gap-3 pt-6">
+                              <button 
+                                type="button" 
+                                onClick={() => setIsAddUserOpen(false)}
+                                className="flex-1 py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-gray-200 transition-all active:scale-95"
+                              >
+                                Annuler
+                              </button>
+                              <button 
+                                type="submit"
+                                disabled={isSyncing}
+                                className="flex-[2] py-4 bg-orange-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-orange-700 transition-all shadow-xl shadow-orange-500/20 disabled:opacity-50 flex items-center justify-center gap-2 active:scale-95"
+                              >
+                                {isSyncing ? <RefreshCcw size={14} className="animate-spin" /> : <UserPlus size={14} />}
+                                {isSyncing ? 'TRAITEMENT...' : "CRÉER L'ACCÈS"}
+                              </button>
+                           </div>
+                         </form>
+                       </motion.div>
+                     </div>
+                   )}
+                 </AnimatePresence>
+
+                {userRole !== 'admin' && (
+                  <div className="p-8 bg-blue-50 rounded-[32px] border border-blue-100 flex items-center gap-6">
+                     <Lock className="text-blue-500" size={24} />
+                     <p className="text-sm font-medium text-blue-900">Seul un administrateur peut modifier les rôles et les accès du personnel.</p>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {activeTab === 'backup' && (
+              <div className="space-y-12">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <div className="p-8 bg-gray-50 rounded-[40px] border border-gray-100 flex flex-col justify-between group hover:border-orange-500/30 transition-all">
+                      <div>
+                        <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-orange-500 shadow-sm mb-6 group-hover:bg-orange-500 group-hover:text-white transition-all">
+                          <Download size={28} />
+                        </div>
+                        <h4 className="text-xl font-black text-gray-900 mb-2">Export Manuel</h4>
+                        <p className="text-sm text-gray-500 font-medium">Téléchargez une copie de sécurité de votre base de données locale.</p>
+                      </div>
+                      <button 
+                        onClick={handleBackup}
+                        disabled={isSyncing}
+                        className="mt-8 px-6 py-4 bg-white text-gray-900 rounded-2xl font-black text-xs uppercase tracking-widest border border-gray-200 hover:bg-gray-900 hover:text-white transition-all disabled:opacity-50"
+                      >
+                        {isSyncing ? 'EXPORT EN COURS...' : 'DÉMARRER L\'EXPORT'}
+                      </button>
+                   </div>
+
+                   <div className="p-8 bg-blue-50 rounded-[40px] border border-blue-100 flex flex-col justify-between group hover:border-blue-500/30 transition-all">
+                      <div>
+                        <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-blue-500 shadow-sm mb-6 group-hover:bg-blue-500 group-hover:text-white transition-all">
+                          <Upload size={28} />
+                        </div>
+                        <h4 className="text-xl font-black text-blue-900 mb-2">Restauration Système</h4>
+                        <p className="text-sm text-blue-600/70 font-medium italic">Importez un fichier de sauvegarde pour restaurer vos données (Validation Admin requise).</p>
+                      </div>
+                      <label className="mt-8 px-6 py-4 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest text-center cursor-pointer hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/20 disabled:opacity-50">
+                        {isSyncing ? 'RESTAURATION...' : 'RESTAURER DEPUIS JSON'}
+                        <input type="file" accept=".json" onChange={handleFileRestore} className="hidden" disabled={isSyncing} />
+                      </label>
+                   </div>
+
+                   {userRole === 'admin' && (
+                      <div className="p-8 bg-red-50 rounded-[40px] border border-red-100 flex flex-col justify-between group">
+                         <div>
+                           <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-red-500 shadow-sm mb-6 group-hover:bg-red-500 group-hover:text-white transition-all">
+                             <Trash2 size={28} />
+                           </div>
+                           <h4 className="text-xl font-black text-red-900 mb-2">Réinitialisation Système</h4>
+                           <p className="text-sm text-red-600/70 font-medium">Zone dangereuse : Efface définitivement toutes les données de vente et d'inventaire.</p>
+                         </div>
+                         <button 
+                           onClick={() => checkMasterPassword('RESET')}
+                           disabled={isSyncing}
+                           className="mt-8 px-6 py-4 bg-red-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-700 transition-all shadow-xl shadow-red-500/20 disabled:opacity-50"
+                         >
+                           {isSyncing ? 'RESET EN COURS...' : 'RÉINITIALISER TOUT'}
+                         </button>
+                      </div>
+                    )}
+                </div>
+
+              </div>
+            )}
+
+            {activeTab === 'license' && (
+                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-[32px] text-white relative overflow-hidden shadow-2xl shadow-blue-500/20">
+                    <AnimatePresence>
+                      {activationSuccess && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -20 }}
+                          className="absolute inset-0 z-20 bg-green-500 flex items-center justify-center p-6 text-center"
+                        >
+                          <div className="flex flex-col items-center">
+                            <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mb-4 backdrop-blur-md">
+                              <Check size={32} className="text-white" />
+                            </div>
+                            <h3 className="text-2xl font-black uppercase tracking-tighter">Félicitations !</h3>
+                            <p className="text-sm font-bold opacity-90">Licence activée pour un an</p>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                    <div className="relative z-10">
+                      <div className="flex items-center gap-4 mb-6">
+                        <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-md">
+                          <ShieldCheck size={24} />
+                        </div>
+                        <h3 className="text-xl font-bold italic tracking-tight">Statut du Système</h3>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div>
+                          <p className="text-white/60 text-[10px] font-black uppercase tracking-widest mb-1">Clé Actuelle</p>
+                          <p className="text-2xl font-black font-mono tracking-tighter">
+                            {storeSettings?.licenseStatus === 'active' ? 'G-TECH-XXXX-XXXX-XXXX' : (storeSettings?.licenseKey || '—— —— —— ——')}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-white/60 text-[10px] font-black uppercase tracking-widest mb-1">Expiration</p>
+                          <p className="text-2xl font-black tracking-tighter">
+                            {storeSettings?.licenseExpiry ? storeSettings.licenseExpiry.toDate()?.toLocaleDateString() : '—— —— ——'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-8 flex items-center gap-2">
+                        <div className={`w-3 h-3 rounded-full animate-pulse ${storeSettings?.licenseStatus === 'active' ? 'bg-green-400' : 'bg-red-400'}`} />
+                        <span className="text-xs font-black uppercase tracking-widest">
+                          {storeSettings?.licenseStatus === 'active' ? 'Système Certifié & Actif' : 'Licence Non Active'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl translate-x-1/2 -translate-y-1/2" />
+                  </div>
+
+                  <div className="bg-gray-50 border-2 border-gray-100 p-8 rounded-[32px]">
+                    <h4 className="text-sm font-black text-gray-900 uppercase tracking-widest mb-6">Activation de la Licence</h4>
+                    <form onSubmit={handleUpdateLicense} className="flex flex-col md:flex-row gap-4">
+                      <input 
+                        name="licenseKey"
+                        placeholder=""
+                        className="flex-1 bg-white border border-gray-100 rounded-2xl px-6 py-4 font-bold text-sm outline-none focus:border-blue-500 transition-all shadow-sm"
+                        required
+                      />
+                      <button 
+                        type="submit"
+                        className="bg-gray-900 text-white px-10 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-black transition-all shadow-xl shadow-gray-200"
+                      >
+                        Activer la Licence
+                      </button>
+                    </form>
+                    <p className="mt-4 text-[10px] text-gray-400 font-medium">SUPPORT: G-TECH LAB SOLUTION • ANGES.GILDAS@GMAIL.COM / +228 91 03 30 04</p>
+                  </div>
+                </div>
+              )}
+
+            {activeTab === 'audit' && (
+              <div className="space-y-8">
+                 <div className="flex justify-between items-center">
+                    <h3 className="text-2xl font-black text-gray-900">{t.audit}</h3>
+                    <button className="p-3 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors"><RefreshCcw size={20} /></button>
+                 </div>
+                 <div className="space-y-4">
+                    {logs.map(log => (
+                      <div key={log.id} className="p-6 bg-gray-50 rounded-[32px] border border-gray-100/50 flex items-start justify-between hover:bg-white transition-all shadow-sm">
+                         <div className="flex items-start gap-4">
+                            <div className="p-3 bg-white rounded-2xl text-gray-400 shadow-sm"><History size={18} /></div>
+                            <div>
+                               <div className="flex items-center gap-2 mb-1">
+                                 <span className="text-orange-500 font-black text-[9px] uppercase tracking-[0.2em]">{log.action}</span>
+                                 <span className="text-[10px] text-gray-300">•</span>
+                                 <span className="text-[10px] text-gray-400 font-bold">{log.timestamp?.toDate()?.toLocaleString() || 'N/A'}</span>
+                               </div>
+                               <p className="text-sm font-bold text-gray-900">{log.details || 'System action performed'}</p>
+                               <p className="text-[10px] text-gray-400 mt-1 uppercase font-black tracking-widest">{log.userName || log.userId}</p>
+                            </div>
+                         </div>
+                      </div>
+                    ))}
+                 </div>
+              </div>
+            )}
+          </>
+        )}
+      </motion.div>
+        )}
+      </AnimatePresence>
+       <AnimatePresence>
+         {isSetPasswordOpen && (
+           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/90 backdrop-blur-xl" />
+             <motion.div 
+               initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+               className="relative bg-white w-full max-w-sm rounded-[44px] p-10 shadow-2xl text-center overflow-hidden border border-white/20"
+             >
+               <div className="absolute top-0 left-0 w-full h-2 bg-orange-500" />
+               <div className="w-20 h-20 bg-orange-50 rounded-[28px] flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-orange-500/10">
+                 <Lock className="text-orange-500" size={32} />
+               </div>
+               <h3 className="text-2xl font-black text-gray-900 mb-2 tracking-tighter uppercase">SÉCURITÉ RENFORCÉE</h3>
+               <p className="text-gray-500 text-sm font-medium mb-8">Définissez un mot de passe pour protéger le module Paramètres et les actions sensibles.</p>
+               
+               <form onSubmit={handleSetSettingsPassword} className="space-y-4">
+                  <input 
+                    name="password" type="password" required placeholder="Nouveau Mot de Passe" 
+                    className="w-full px-8 py-5 bg-gray-50 rounded-3xl font-bold text-gray-900 border-none focus:ring-4 focus:ring-orange-500/5 outline-none text-center"
+                  />
+                  <input 
+                    name="confirm" type="password" required placeholder="Confirmer Mot de Passe" 
+                    className="w-full px-8 py-5 bg-gray-50 rounded-3xl font-bold text-gray-900 border-none focus:ring-4 focus:ring-orange-500/5 outline-none text-center"
+                  />
+                  <button type="submit" className="w-full py-5 bg-slate-900 text-white rounded-[28px] font-black uppercase tracking-widest text-[11px] hover:bg-black transition-all shadow-xl shadow-slate-200">
+                    ENREGISTRER LA SÉCURITÉ
+                  </button>
+               </form>
+             </motion.div>
+           </div>
+         )}
+         {isVerifyPasswordOpen && (
+           <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/80 backdrop-blur-md" />
+             <motion.div 
+               initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+               className="relative bg-white w-full max-w-sm rounded-[40px] p-10 shadow-2xl text-center"
+             >
+               <div className="w-16 h-16 bg-gray-900 text-white rounded-[20px] flex items-center justify-center mx-auto mb-6 transform rotate-6">
+                 <ShieldCheck size={28} />
+               </div>
+               <h3 className="text-xl font-black text-gray-900 mb-1 tracking-tighter uppercase underline decoration-orange-500 decoration-2 underline-offset-4 tracking-tighter">ACTION VALIDÉE ?</h3>
+               <p className="text-gray-500 text-[11px] font-bold uppercase tracking-widest mb-8">Saisissez votre mot de passe de sécurité</p>
+               
+               <form onSubmit={handleVerifyPassword} className="space-y-4">
+                  <input 
+                    type="password" autoFocus required placeholder="••••" 
+                    value={settingsPasswordInput} onChange={e => setSettingsPasswordInput(e.target.value)}
+                    className="w-full px-8 py-5 bg-gray-50 rounded-3xl font-black text-gray-900 border-none focus:ring-4 focus:ring-orange-500/5 outline-none text-center text-2xl tracking-[1em]"
+                  />
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => { setIsVerifyPasswordOpen(false); setPendingAction(null); setSettingsPasswordInput(''); }} className="flex-1 py-4 bg-gray-100 text-gray-400 rounded-2xl font-black text-[10px] uppercase tracking-widest">ANNULER</button>
+                    <button type="submit" className="flex-[2] py-4 bg-orange-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-orange-500/20">VALIDER</button>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => window.location.href = 'mailto:anges.gildas@gmail.com?subject=Réinitialisation Mot de Passe Paramètres MARKET PRO'}
+                    className="mt-6 text-[9px] font-black text-orange-500 uppercase tracking-widest hover:underline"
+                  >
+                    Mot de passe oublié ? Contactez le Support
+                  </button>
+               </form>
+             </motion.div>
+           </div>
+         )}
+       </AnimatePresence>
+     </div>
+   );
+ }

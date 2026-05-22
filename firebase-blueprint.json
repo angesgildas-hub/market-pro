@@ -1,0 +1,324 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A product available for sale in the supermarket.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string", "description": "ID of the store this product belongs to" },
+        "barcode": { "type": "string", "description": "Unique barcode/SKU" },
+        "name": { "type": "string", "description": "Product name" },
+        "category": { "type": "string", "description": "Product category ID" },
+        "price": { "type": "number", "description": "Selling price" },
+        "costPrice": { "type": "number", "description": "Purchase cost" },
+        "stock": { "type": "number", "description": "Current stock level" },
+        "lowStockThreshold": { "type": "number", "description": "Alert threshold for stock" },
+        "unit": { "type": "string", "enum": ["pcs", "kg", "g", "ml", "l"], "description": "Measurement unit" },
+        "expiryDate": { "type": "string", "format": "date", "description": "Product expiry date" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["storeId", "barcode", "name", "price", "stock", "unit"]
+    },
+    "StoreSettings": {
+      "title": "Store Settings",
+      "description": "General system configuration for the store.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "licenseKey": { "type": "string" },
+        "licenseExpiry": { "type": "string", "format": "date-time" },
+        "licenseStatus": { "type": "string", "enum": ["active", "expired", "none"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "address", "phone"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product category.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["storeId", "name"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "A completed transaction.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "cashierId": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "discount": { "type": "number" },
+        "amountReceived": { "type": "number" },
+        "change": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "card", "mobile"] },
+        "itemsCount": { "type": "number" }
+      },
+      "required": ["storeId", "timestamp", "cashierId", "totalAmount", "paymentMethod"]
+    },
+    "SaleItem": {
+      "title": "Sale Item",
+      "description": "An item included in a sale.",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "name": { "type": "string" },
+        "quantity": { "type": "number" },
+        "priceAtSale": { "type": "number" },
+        "total": { "type": "number" }
+      },
+      "required": ["productId", "name", "quantity", "priceAtSale", "total"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Business expense for accounting.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "title": { "type": "string" },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "description": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["storeId", "title", "amount", "category", "date"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "Record of system activities for security.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "action": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "details": { "type": "string" }
+      },
+      "required": ["storeId", "action", "userId", "timestamp"]
+    },
+    "User": {
+      "title": "UserProfile",
+      "description": "System user with assigned role.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "storeId": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "cashier", "manager"] },
+        "isActive": { "type": "boolean" },
+        "permissions": {
+          "type": "object",
+          "properties": {
+            "pos": { "$ref": "ModulePermissions" },
+            "inventory": { "$ref": "ModulePermissions" },
+            "accounting": { "$ref": "ModulePermissions" },
+            "settings": { "$ref": "ModulePermissions" },
+            "reports": { "$ref": "ModulePermissions" },
+            "personnel": { "$ref": "ModulePermissions" },
+            "clients": { "$ref": "ModulePermissions" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "storeId", "email", "role"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Customer information for loyalty and tracking.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "totalSpent": { "type": "number" },
+        "visitsCount": { "type": "number" },
+        "lastVisit": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["storeId", "name", "phone"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Information about staff members.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "position": { "type": "string" },
+        "department": { "type": "string" },
+        "salary": { "type": "number" },
+        "hireDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["active", "on_leave", "terminated"] },
+        "idCardNumber": { "type": "string" },
+        "photoUrl": { "type": "string" }
+      },
+      "required": ["storeId", "firstName", "lastName", "position", "salary", "status"]
+    },
+    "LeaveRequest": {
+      "title": "Leave Request",
+      "description": "Leave application record.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "type": { "type": "string", "enum": ["vacation", "sick", "personal", "other"] },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["storeId", "employeeId", "type", "startDate", "endDate", "status"]
+    },
+    "PayrollRecord": {
+      "title": "Payroll Record",
+      "description": "Salary payment record.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "month": { "type": "string" },
+        "baseSalary": { "type": "number" },
+        "bonuses": { "type": "number" },
+        "deductions": { "type": "number" },
+        "netPay": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "paid"] },
+        "paidAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["storeId", "employeeId", "month", "baseSalary", "netPay", "status"]
+    },
+    "ModulePermissions": {
+      "title": "Module Permissions",
+      "type": "object",
+      "properties": {
+        "read": { "type": "boolean" },
+        "create": { "type": "boolean" },
+        "update": { "type": "boolean" },
+        "delete": { "type": "boolean" }
+      }
+    },
+    "MobileMoneySettings": {
+      "title": "MobileMoneySettings",
+      "type": "object",
+      "properties": {
+        "selectedCountry": { "type": "string" },
+        "merchantNumbers": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "MobileMoneyFloats": {
+      "title": "MobileMoneyFloats",
+      "type": "object",
+      "properties": {
+        "balances": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "MobileTransaction": {
+      "title": "MobileTransaction",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "operator": { "type": "string" },
+        "type": { "type": "string" },
+        "amount": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ConnectionHistoryLog": {
+      "title": "ConnectionHistoryLog",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userName": { "type": "string" },
+        "storeId": { "type": "string" },
+        "storeName": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "userAgent": { "type": "string" },
+        "status": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "System user profiles and roles."
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Inventory of products."
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Product categories."
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Completed sales transactions."
+    },
+    "/sales/{saleId}/items/{itemId}": {
+      "schema": "SaleItem",
+      "description": "Individual items in a sale."
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Business expenses records."
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "System activity logs."
+    },
+    "/storeSettings/{settingsId}": {
+      "schema": "StoreSettings",
+      "description": "Store configuration (usually a single document named 'main')."
+    },
+    "/employees/{employeeId}": {
+      "schema": "Employee",
+      "description": "Employee records."
+    },
+    "/leaves/{leaveId}": {
+      "schema": "LeaveRequest",
+      "description": "Leave requests from employees."
+    },
+    "/payroll/{recordId}": {
+      "schema": "PayrollRecord",
+      "description": "Payroll and salary payment records."
+    },
+    "/clients/{clientId}": {
+      "schema": "Client",
+      "description": "Customer records for the store."
+    },
+    "/mobileMoneySettings/{storeId}": {
+      "schema": "MobileMoneySettings",
+      "description": "Dynamic configurations for active country flag, operators, and unified merchant numbers."
+    },
+    "/mobileMoneyFloats/{storeId}": {
+      "schema": "MobileMoneyFloats",
+      "description": "Operating account float cache balance for active mobile money operators."
+    },
+    "/mobileTransactions/{txId}": {
+      "schema": "MobileTransaction",
+      "description": "Incoming/outgoing mobile money transactions tracking."
+    },
+    "/connectionHistory/{logId}": {
+      "schema": "ConnectionHistoryLog",
+      "description": "User login and connection history for all subscriber stores tracked by central system."
+    }
+  }
+}
