@@ -1,0 +1,15 @@
+# Configuration Apache pour Hostinger (Hébergement Muatulasé)
+# Gère le routage de l'application React (SPA) et redirige les requêtes API vers PHP
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Redirection de l'ancienne route API Node vers le script PHP natif de Hostinger
+  RewriteRule ^api/send-email$ api/send-email.php [L,QSA]
+
+  # Routage normal pour React SPA (rediriger toutes les pages vers index.html)
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>
