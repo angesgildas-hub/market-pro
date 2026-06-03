@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  collection, query, getDocs, doc, updateDoc, setDoc,
+  collection, query, getDocs, getDoc, doc, updateDoc, setDoc,
   onSnapshot, orderBy, where, deleteDoc, Timestamp,
   serverTimestamp, limit
 } from 'firebase/firestore';
@@ -10,23 +10,78 @@ import {
   ShieldAlert, Users, Store, Calendar, 
   CheckCircle2, XCircle, AlertTriangle, 
   Search, RefreshCcw, Power, Trash2, 
-  Activity, ArrowRight, Mail, Phone, MapPin, User, Globe, History
+  Activity, ArrowRight, Mail, Phone, MapPin, User, Globe, History, Lock, Link, Terminal
 } from 'lucide-react';
 import { StoreSettings, UserProfile } from '../types';
 
 export default function SuperAdmin() {
   const [stores, setStores] = useState<StoreSettings[]>([]);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+  const [globalSales, setGlobalSales] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStore, setSelectedStore] = useState<StoreSettings | null>(null);
   const [isCreatingStore, setIsCreatingStore] = useState(false);
+  const [editingAdminUser, setEditingAdminUser] = useState<UserProfile | null>(null);
+  const [editedAdminEmail, setEditedAdminEmail] = useState('');
+  const [editedAdminPassword, setEditedAdminPassword] = useState('');
+  const [isUpdatingCredentials, setIsUpdatingCredentials] = useState(false);
   const [newStoreData, setNewStoreData] = useState({ name: '', adminEmail: '', address: '', phone: '' });
   const [systemConfig, setSystemConfig] = useState<any>(null);
   const [domainUrl, setDomainUrl] = useState('');
-  const [activeTab, setActiveTab] = useState<'stores' | 'connections'>('stores');
+  const [activeTab, setActiveTab] = useState<'stores' | 'connections' | 'saas' | 'redirection'>('stores');
   const [connectionLogs, setConnectionLogs] = useState<any[]>([]);
   const [logsLimit, setLogsLimit] = useState<number>(100);
+
+  // SaaS Integration states
+  const [saasUrl, setSaasUrl] = useState('');
+  const [saasToken, setSaasToken] = useState('');
+  const [saasSyncEnabled, setSaasSyncEnabled] = useState(false);
+  const [isSyncingSaaS, setIsSyncingSaaS] = useState(false);
+  const [saasSyncLogs, setSaasSyncLogs] = useState<Array<{
+    timestamp: string;
+    type: string;
+    payload: any;
+    status: 'success' | 'error';
+    details: string;
+  }>>([]);
+
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+  } | null>(null);
+
+  const [alertModal, setAlertModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'success' | 'info' | 'error';
+  } | null>(null);
+
+  const showConfirm = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmModal({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: () => {
+        onConfirm();
+        setConfirmModal(null);
+      },
+      onCancel: () => setConfirmModal(null)
+    });
+  };
+
+  const showAlert = (message: string, type: 'success' | 'info' | 'error' = 'info', title?: string) => {
+    setAlertModal({
+      isOpen: true,
+      title: title || (type === 'error' ? 'Erreur' : type === 'success' ? 'Succès' : 'Information'),
+      message,
+      type
+    });
+  };
 
   useEffect(() => {
     // Subscription for connectionHistory logs (accessible only by bootstrap admin)
@@ -59,6 +114,9 @@ export default function SuperAdmin() {
         const data = snap.data();
         setSystemConfig(data);
         if (data.publicAccessUrl) setDomainUrl(data.publicAccessUrl);
+        if (data.saasApiUrl) setSaasUrl(data.saasApiUrl);
+        if (data.saasApiToken) setSaasToken(data.saasApiToken);
+        setSaasSyncEnabled(!!data.saasSyncEnabled);
       } else {
         // Initialize if not exists
         setSystemConfig({ isGoogleLoginEnabled: true });
@@ -95,10 +153,20 @@ export default function SuperAdmin() {
       }
     });
 
+    // Real-time listener for all sales globally
+    const unsubSales = onSnapshot(collection(db, 'sales'), (snap) => {
+      console.log("SuperAdmin: Fetched global sales transactions:", snap.size);
+      const salesList = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+      setGlobalSales(salesList);
+    }, (err) => {
+      console.warn("Unable to fetch global sales in real-time:", err);
+    });
+
     return () => {
       unsubConfig();
       unsubStores();
       unsubUsers();
+      unsubSales();
     };
   }, []);
 
@@ -109,9 +177,9 @@ export default function SuperAdmin() {
         isGoogleLoginEnabled: !systemConfig?.isGoogleLoginEnabled,
         updatedAt: serverTimestamp()
       }, { merge: true });
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error toggling google login:", err);
-      alert("Erreur lors de la modification de la configuration.");
+      alert("Erreur lors de la modification de la configuration : " + (err?.message || err || "Erreur inconnue"));
     }
   };
 
@@ -122,9 +190,9 @@ export default function SuperAdmin() {
         isRegistrationEnabled: systemConfig?.isRegistrationEnabled === false ? true : false,
         updatedAt: serverTimestamp()
       }, { merge: true });
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error toggling registration:", err);
-      alert("Erreur lors de la modification de la configuration.");
+      alert("Erreur lors de la modification de la configuration : " + (err?.message || err || "Erreur inconnue"));
     }
   };
 
@@ -137,9 +205,123 @@ export default function SuperAdmin() {
         updatedAt: serverTimestamp()
       }, { merge: true });
       alert("Configuration du domaine mise à jour.");
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error updating domain config:", err);
-      alert("Erreur lors de la mise à jour.");
+      alert("Erreur lors de la mise à jour : " + (err?.message || err || "Erreur inconnue"));
+    }
+  };
+
+  const handleUpdateSaaSConfig = async (url: string, token: string, syncEnabled: boolean) => {
+    try {
+      const configRef = doc(db, 'systemConfig', 'globals');
+      await setDoc(configRef, { 
+        saasApiUrl: url.trim(),
+        saasApiToken: token.trim(),
+        saasSyncEnabled: syncEnabled,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      showAlert("Configuration de l'intégration SaaS enregistrée avec succès !", "success");
+    } catch (err: any) {
+      console.error("Error updating SaaS config:", err);
+      showAlert("Erreur lors de la mise à jour de la configuration SaaS : " + (err?.message || err), "error");
+    }
+  };
+
+  const generateSecureToken = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let token = 'saas_';
+    for (let i = 0; i < 32; i++) {
+      token += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setSaasToken(token);
+    showAlert("Nouveau jeton sécurisé généré. N'oubliez pas d'enregistrer la configuration !", "info");
+  };
+
+  const handleSyncSnapshotToSaaS = async () => {
+    if (!saasUrl) {
+      showAlert("Veuillez d'abord configurer une URL d'API SaaS.", "error");
+      return;
+    }
+
+    setIsSyncingSaaS(true);
+    const mockPayload = {
+      event: "system_snapshot",
+      timestamp: new Date().toISOString(),
+      appletId: "c3e161f5-1330-44ff-90f4-f53e4c3b146d",
+      source: window.location.origin,
+      stats: {
+        totalStores: stats.totalStores,
+        activeLicenses: stats.activeLicenses,
+        expiredLicenses: stats.expiredLicenses,
+        suspendedLicenses: stats.suspendedLicenses,
+        totalUsers: stats.totalUsers,
+        totalGlobalRevenue: stats.totalGlobalRevenue,
+        totalGlobalOrders: stats.totalGlobalOrders,
+      },
+      stores: stores.map(s => {
+        const storeUsers = allUsers.filter(u => u.storeId === s.id);
+        const storeSales = globalSales.filter(salesDoc => salesDoc.storeId === s.id);
+        const storeSalesAmount = storeSales.reduce((acc, salesDoc) => acc + (salesDoc.totalAmount || 0), 0);
+        return {
+          id: s.id,
+          name: s.name,
+          address: s.address,
+          phone: s.phone,
+          licenseStatus: s.licenseStatus,
+          licenseExpiry: s.licenseExpiry,
+          createdAt: s.createdAt instanceof Timestamp ? s.createdAt.toDate().toISOString() : s.createdAt,
+          usersCount: storeUsers.length,
+          salesCount: storeSales.length,
+          salesAmount: storeSalesAmount
+        };
+      })
+    };
+
+    try {
+      const response = await fetch('/api/saas/proxy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          url: saasUrl,
+          token: saasToken,
+          payload: mockPayload
+        })
+      });
+
+      const result = await response.json();
+      
+      const logItem = {
+        timestamp: new Date().toLocaleTimeString(),
+        type: "Manuel / Snapshot Global",
+        payload: mockPayload,
+        status: result.success ? 'success' as const : 'error' as const,
+        details: result.success 
+          ? `Réponse positive du SaaS (Status: ${result.status}). Synchronisation réussie !`
+          : `Le SaaS a répondu avec une erreur (Status: ${result.status || 500}) : ${result.error || result.response || "Inconnu"}`
+      };
+
+      setSaasSyncLogs(prev => [logItem, ...prev].slice(0, 50));
+
+      if (result.success) {
+        showAlert("Données synchronisées avec votre SaaS avec succès !", "success");
+      } else {
+        showAlert(`Synchro SaaS : Le serveur distant a retourné une erreur (Code ${result.status || 'Inconnu'}). Consultez les logs ci-dessous.`, "error");
+      }
+    } catch (err: any) {
+      console.error("Failed to sync snapshot to central SaaS:", err);
+      const logItem = {
+        timestamp: new Date().toLocaleTimeString(),
+        type: "Manuel / Snapshot Global",
+        payload: mockPayload,
+        status: 'error' as const,
+        details: `Erreur fatale lors de la connexion : ${err.message || "Serveur injoignable"}`
+      };
+      setSaasSyncLogs(prev => [logItem, ...prev].slice(0, 50));
+      showAlert("Échec de connexion avec le serveur SaaS. Détails : " + err.message, "error");
+    } finally {
+      setIsSyncingSaaS(false);
     }
   };
 
@@ -165,7 +347,8 @@ export default function SuperAdmin() {
     }
   };
 
-  const handleUpdateLicense = async (storeId: string, status: 'active' | 'expired' | 'suspended', months: number = 0) => {
+  const handleUpdateLicense = async (storeId: string, status: 'active' | 'expired' | 'suspended', months: number = 0, adminUid?: string) => {
+    setLoading(true);
     try {
       const storeRef = doc(db, 'storeSettings', storeId);
       const updates: any = { licenseStatus: status };
@@ -180,44 +363,217 @@ export default function SuperAdmin() {
 
       // If approving, also activate the store admin users
       if (status === 'active') {
-        const storeUsers = allUsers.filter(u => u.storeId === storeId && u.pendingApproval);
         const storeObj = stores.find(s => s.id === storeId);
         const storeName = storeObj?.name || 'Ma Boutique';
-        for (const user of storeUsers) {
-          await updateDoc(doc(db, 'users', user.uid), { 
+
+        // Direct lookup of the admin user document whose UID is exactly storeId
+        const usersToApproveMap = new Map<string, UserProfile>();
+
+        // 0. Explicit adminUid override (most reliable)
+        if (adminUid) {
+          const matchedUser = allUsers.find(u => u.uid === adminUid);
+          if (matchedUser) {
+            usersToApproveMap.set(adminUid, matchedUser);
+          } else {
+            try {
+              const uSnap = await getDoc(doc(db, 'users', adminUid));
+              if (uSnap.exists()) {
+                usersToApproveMap.set(adminUid, { ...uSnap.data(), uid: adminUid } as UserProfile);
+              }
+            } catch (err) {
+              console.warn("Could not fetch explicit admin user doc by adminUid:", err);
+            }
+          }
+        }
+
+        // 1. Check local memory (best effort fallback)
+        const stateUsers = allUsers.filter(u => u.storeId === storeId && u.pendingApproval);
+        for (const u of stateUsers) {
+          usersToApproveMap.set(u.uid, u);
+        }
+
+        // 2. Direct document get by ID (where storeId matches the admin's UID)
+        try {
+          const directUserSnap = await getDoc(doc(db, 'users', storeId));
+          if (directUserSnap.exists()) {
+            const userData = directUserSnap.data();
+            if (userData && (userData.pendingApproval || userData.isActive === false)) {
+              usersToApproveMap.set(storeId, { ...userData, uid: storeId } as UserProfile);
+            }
+          }
+        } catch (err) {
+          console.warn("Could not fetch user directly by storeId doc ID:", err);
+        }
+
+        // 3. Collection query query for store users to make super sure we get them
+        try {
+          const q = query(collection(db, 'users'), where('storeId', '==', storeId));
+          const querySnap = await getDocs(q);
+          querySnap.docs.forEach(docSnap => {
+            const userData = docSnap.data();
+            if (userData && (userData.pendingApproval || userData.isActive === false)) {
+              usersToApproveMap.set(docSnap.id, { ...userData, uid: docSnap.id } as UserProfile);
+            }
+          });
+        } catch (err) {
+          console.warn("Could not fetch users directly by storeId query:", err);
+        }
+
+        // 4. Update and send notifications
+        for (const [uid, user] of usersToApproveMap.entries()) {
+          await updateDoc(doc(db, 'users', uid), { 
             isActive: true, 
             pendingApproval: false,
             updatedAt: serverTimestamp()
           });
-          // Send approval email directly to user's mailbox
-          await sendApprovalEmail(user.email, user.displayName || 'Utilisateur', storeName);
+          // Send approval email directly to user's mailbox (non-blocking)
+          sendApprovalEmail(user.email, user.displayName || 'Utilisateur', storeName);
         }
       }
 
-      alert("Licence mise à jour avec succès.");
-    } catch (error) {
+      showAlert("Licence mise à jour avec succès.", "success");
+    } catch (error: any) {
       console.error("Error updating license:", error);
-      alert("Erreur lors de la mise à jour.");
+      showAlert("Erreur lors de la mise à jour : " + (error?.message || error || "Erreur inconnue"), "error");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleApproveStore = async (storeId: string) => {
-    if (!confirm("Voulez-vous approuver cette boutique et activer son administrateur ?")) return;
-    await handleUpdateLicense(storeId, 'active', 12);
+  const handleApproveStore = async (storeId: string, adminUid?: string) => {
+    showConfirm(
+      "Approuver la boutique",
+      "Voulez-vous approuver cette boutique et activer son administrateur ?",
+      async () => {
+        await handleUpdateLicense(storeId, 'active', 12, adminUid);
+      }
+    );
+  };
+
+  const handleRejectStore = async (storeId: string, adminUid?: string) => {
+    showConfirm(
+      "Rejeter la demande",
+      "Voulez-vous rejeter et supprimer définitivement cette demande de boutique ?",
+      async () => {
+        setLoading(true);
+        try {
+          // 1. Delete the store settings
+          await deleteDoc(doc(db, 'storeSettings', storeId));
+          
+          // 2. Delete the pending admin user
+          if (adminUid) {
+            await deleteDoc(doc(db, 'users', adminUid));
+          }
+          
+          // 3. Query and delete any other users that registered under this storeId to protect DB state integrity
+          const q = query(collection(db, 'users'), where('storeId', '==', storeId));
+          const snaps = await getDocs(q);
+          for (const d of snaps.docs) {
+            await deleteDoc(d.ref);
+          }
+          
+          showAlert("Demande de boutique rejetée et supprimée avec succès.", "success");
+        } catch (err: any) {
+          console.error("Error rejecting store request:", err);
+          showAlert("Erreur lors du rejet de la boutique : " + (err?.message || err || "Erreur inconnue"), "error");
+        } finally {
+          setLoading(false);
+        }
+      }
+    );
+  };
+
+  const handleRejectUser = async (userId: string) => {
+    showConfirm(
+      "Rejeter l'utilisateur",
+      "Voulez-vous rejeter cet utilisateur ?",
+      async () => {
+        setLoading(true);
+        try {
+          await deleteDoc(doc(db, 'users', userId));
+          showAlert("Utilisateur rejeté et supprimé avec succès.", "success");
+        } catch (err: any) {
+          console.error("Error rejecting user:", err);
+          showAlert("Erreur lors du rejet de l'utilisateur : " + (err?.message || err || "Erreur inconnue"), "error");
+        } finally {
+          setLoading(false);
+        }
+      }
+    );
   };
 
   const handleToggleUserStatus = async (userId: string, currentStatus: boolean) => {
+    setLoading(true);
     try {
       await updateDoc(doc(db, 'users', userId), { isActive: !currentStatus });
-    } catch (error) {
+      showAlert("Statut de l'utilisateur mis à jour.", "success");
+    } catch (error: any) {
       console.error("Error toggling user status:", error);
+      showAlert("Erreur de mise à jour du statut : " + (error?.message || error || "Erreur inconnue"), "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateAdminCredentials = async (uid: string, newEmail: string, newPassword?: string) => {
+    if (!newEmail) {
+      showAlert("L'adresse email est requise.", "error");
+      return;
+    }
+    
+    setIsUpdatingCredentials(true);
+    try {
+      // 1. Update Firestore database doc
+      const updates: any = { email: newEmail.trim().toLowerCase() };
+      if (newPassword && newPassword.trim()) {
+        updates.password = newPassword.trim();
+      }
+      
+      await updateDoc(doc(db, 'users', uid), updates);
+
+      // Refresh local states
+      setAllUsers(prev => prev.map(u => u.uid === uid ? { ...u, ...updates } : u));
+
+      // 2. Try updating Auth system credentials using backend API
+      try {
+        const callerEmail = auth.currentUser?.email;
+        const response = await fetch('/api/admin/update-user-auth', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            uid,
+            email: newEmail.trim().toLowerCase(),
+            password: newPassword && newPassword.trim() ? newPassword.trim() : undefined,
+            callerEmail
+          })
+        });
+
+        const authResult = await response.json();
+        if (authResult.success) {
+          showAlert("Identifiants de l'administrateur mis à jour avec succès !", "success");
+        } else {
+          showAlert(`${authResult.error || "Erreur Auth"}: ${authResult.details || ""}. Note: Les identifiants ont tout de même été mis à jour en base de données localement.`, "info");
+        }
+      } catch (authApiErr: any) {
+        console.warn("Could not sync with Firebase Auth API, but updated in db:", authApiErr);
+        showAlert("Identifiants mis à jour en base de données. Synchro Auth non disponible actuellement.", "success");
+      }
+
+      setEditingAdminUser(null);
+    } catch (error: any) {
+      console.error("Error updating admin credentials:", error);
+      showAlert("Erreur lors de la modification : " + (error?.message || "Erreur inconnue"), "error");
+    } finally {
+      setIsUpdatingCredentials(false);
     }
   };
 
   const handleCreateStore = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newStoreData.name || !newStoreData.adminEmail) {
-      alert("Le nom et l'email admin sont requis.");
+      showAlert("Le nom et l'email admin sont requis.", "error");
       return;
     }
 
@@ -257,12 +613,12 @@ export default function SuperAdmin() {
         createdAt: serverTimestamp()
       });
 
-      alert(`Boutique "${newStoreData.name}" créée avec succès. L'administrateur (${newStoreData.adminEmail}) peut maintenant se connecter.`);
+      showAlert(`Boutique "${newStoreData.name}" créée avec succès. L'administrateur (${newStoreData.adminEmail}) peut maintenant se connecter.`, "success");
       setIsCreatingStore(false);
       setNewStoreData({ name: '', adminEmail: '', address: '', phone: '' });
     } catch (err: any) {
       console.error("Error creating store:", err);
-      alert("Erreur lors de la création: " + err.message);
+      showAlert("Erreur lors de la création: " + err.message, "error");
     } finally {
       setLoading(false);
     }
@@ -271,30 +627,37 @@ export default function SuperAdmin() {
   const handleDeleteStore = async (storeId: string, storeName: string) => {
     // Only the main admin can delete
     if (auth.currentUser?.email !== 'anges.gildas@gmail.com') {
-      alert("Accès non autorisé.");
+      showAlert("Accès non autorisé.", "error");
       return;
     }
 
-    if (!confirm(`⚠️ ATTENTION: Vous allez supprimer DÉFINITIVEMENT la boutique "${storeName}".\n\nTous les comptes utilisateurs liés à cette boutique seront révoqués.\n\nCette action est irréversible. Continuer ?`)) return;
-    
-    setLoading(true);
-    try {
-      // 1. Delete associated users
-      const storeUsers = allUsers.filter(u => u.storeId === storeId);
-      for (const u of storeUsers) {
-        await deleteDoc(doc(db, 'users', u.uid));
+    showConfirm(
+      "Suppression définitive",
+      `⚠️ ATTENTION: Vous allez supprimer DÉFINITIVEMENT la boutique "${storeName}". Tous les comptes utilisateurs liés à cette boutique seront révoqués. Cette action est irréversible. Continuer ?`,
+      async () => {
+        setLoading(true);
+        try {
+          // 1. Direct collection query and deletion of users belonging to this storeId (bulletproof)
+          const q = query(collection(db, 'users'), where('storeId', '==', storeId));
+          const snaps = await getDocs(q);
+          let deletedUsersCount = 0;
+          for (const d of snaps.docs) {
+            await deleteDoc(d.ref);
+            deletedUsersCount++;
+          }
+          
+          // 2. Delete the store settings
+          await deleteDoc(doc(db, 'storeSettings', storeId));
+          
+          showAlert(`Boutique "${storeName}" et ses ${deletedUsersCount} utilisateur(s) ont été supprimés.`, "success");
+        } catch (err: any) {
+          console.error("Error deleting store:", err);
+          showAlert("Erreur lors de la suppression: " + err.message, "error");
+        } finally {
+          setLoading(false);
+        }
       }
-      
-      // 2. Delete the store settings
-      await deleteDoc(doc(db, 'storeSettings', storeId));
-      
-      alert(`Boutique "${storeName}" et ses ${storeUsers.length} utilisateur(s) ont été supprimés.`);
-    } catch (err: any) {
-      console.error("Error deleting store:", err);
-      alert("Erreur lors de la suppression: " + err.message);
-    } finally {
-      setLoading(false);
-    }
+    );
   };
 
   const pendingStores = stores.filter(s => s.licenseStatus === 'pending');
@@ -329,7 +692,9 @@ export default function SuperAdmin() {
       return s.licenseStatus === 'expired' || (s.licenseStatus === 'active' && isExpiredByDate);
     }).length,
     suspendedLicenses: stores.filter(s => s.licenseStatus === 'suspended').length,
-    totalUsers: allUsers.length
+    totalUsers: allUsers.length,
+    totalGlobalRevenue: globalSales.reduce((sum, s) => sum + (s.totalAmount || 0), 0),
+    totalGlobalOrders: globalSales.length
   };
 
   const handleSystemReset = async () => {
@@ -374,6 +739,8 @@ export default function SuperAdmin() {
       </div>
     );
   }
+
+  const storeAdminUser = selectedStore ? allUsers.find(u => u.storeId === selectedStore.id && u.role === 'admin') : null;
 
   return (
     <div className="space-y-8 pb-20">
@@ -559,7 +926,7 @@ export default function SuperAdmin() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {/* Stores Pending */}
             {pendingStores.map(store => {
-               const adminUser = allUsers.find(u => u.storeId === store.id && u.role === 'admin' && u.pendingApproval);
+               const adminUser = allUsers.find(u => u.storeId === store.id && u.role === 'admin');
                return (
                 <div key={`pending-store-${store.id}`} className="bg-white p-6 rounded-[32px] border border-orange-200 shadow-sm hover:shadow-xl transition-all group">
                   <div className="flex items-start justify-between mb-6">
@@ -607,20 +974,16 @@ export default function SuperAdmin() {
 
                   <div className="flex gap-2">
                     <button 
-                      onClick={() => handleApproveStore(store.id)}
+                      onClick={() => handleApproveStore(store.id, adminUser?.uid)}
                       className="flex-1 py-3 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
                     >
                       <CheckCircle2 size={14} />
                       Approuver Boutique
                     </button>
                     <button 
-                      onClick={() => {
-                        if (confirm("Voulez-vous rejeter et supprimer cette demande ?")) {
-                           deleteDoc(doc(db, 'storeSettings', store.id));
-                           if (adminUser) deleteDoc(doc(db, 'users', adminUser.uid));
-                        }
-                      }}
+                      onClick={() => handleRejectStore(store.id, adminUser?.uid)}
                       className="p-3 bg-red-50 text-red-600 rounded-2xl hover:bg-red-600 hover:text-white transition-all active:scale-95 shadow-sm"
+                      title="Rejeter et supprimer"
                     >
                       <XCircle size={18} />
                     </button>
@@ -653,20 +1016,14 @@ export default function SuperAdmin() {
 
                   <div className="flex gap-2">
                     <button 
-                      onClick={async () => {
-                        if (confirm(`Approuver l'administrateur ${user.email} ?`)) {
-                           await updateDoc(doc(db, 'users', user.uid), { 
-                             isActive: true, 
-                             pendingApproval: false,
-                             updatedAt: serverTimestamp()
-                           });
-                           // Also ensure store is active
-                           await updateDoc(doc(db, 'storeSettings', user.storeId), { licenseStatus: 'active' });
-                           // Send approval email directly to user's mailbox
-                           const storeObj = stores.find(s => s.id === user.storeId);
-                           const storeName = storeObj?.name || 'Ma Boutique';
-                           await sendApprovalEmail(user.email, user.displayName || 'Utilisateur', storeName);
-                        }
+                      onClick={() => {
+                        showConfirm(
+                          "Approuver l'administrateur",
+                          `Voulez-vous approuver l'administrateur ${user.email} ?`,
+                          async () => {
+                            await handleUpdateLicense(user.storeId, 'active', 12, user.uid);
+                          }
+                        );
                       }}
                       className="flex-1 py-3 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
                     >
@@ -674,12 +1031,9 @@ export default function SuperAdmin() {
                       Approuver Admin
                     </button>
                     <button 
-                      onClick={() => {
-                        if (confirm("Voulez-vous rejeter cet utilisateur ?")) {
-                           deleteDoc(doc(db, 'users', user.uid));
-                        }
-                      }}
+                      onClick={() => handleRejectUser(user.uid)}
                       className="p-3 bg-red-50 text-red-600 rounded-2xl hover:bg-red-600 hover:text-white transition-all active:scale-95 shadow-sm"
+                      title="Rejeter et supprimer"
                     >
                       <XCircle size={18} />
                     </button>
@@ -691,12 +1045,13 @@ export default function SuperAdmin() {
       )}
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {[
           { label: 'Boutiques Totales', value: stats.totalStores, icon: Store, color: 'text-blue-500', bg: 'bg-blue-50' },
           { label: 'Licences Actives', value: stats.activeLicenses, icon: CheckCircle2, color: 'text-green-500', bg: 'bg-green-50' },
+          { label: 'Chiffre d’Affaires Global', value: `${stats.totalGlobalRevenue.toLocaleString('de-DE')} FCFA`, icon: Activity, color: 'text-emerald-500', bg: 'bg-emerald-50' },
+          { label: 'Ventes Globales', value: stats.totalGlobalOrders, icon: ArrowRight, color: 'text-pink-500', bg: 'bg-pink-50' },
           { label: 'Utilisateurs Globaux', value: stats.totalUsers, icon: Users, color: 'text-orange-500', bg: 'bg-orange-50' },
-          { label: 'Alertes Système', value: stats.expiredLicenses + stats.suspendedLicenses, icon: AlertTriangle, color: 'text-red-500', bg: 'bg-red-50' },
         ].map((stat, idx) => (
           <motion.div 
             key={`stat-super-${idx}`}
@@ -709,7 +1064,7 @@ export default function SuperAdmin() {
               <stat.icon size={24} />
             </div>
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{stat.label}</p>
-            <p className="text-3xl font-black text-gray-900">{stat.value}</p>
+            <p className="text-2xl font-black text-gray-900 truncate">{stat.value}</p>
           </motion.div>
         ))}
       </div>
@@ -773,6 +1128,28 @@ export default function SuperAdmin() {
           <History size={14} />
           Historique des Connexions
         </button>
+        <button
+          onClick={() => setActiveTab('saas')}
+          className={`px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all duration-300 flex items-center gap-2 ${
+            activeTab === 'saas'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-gray-400 hover:text-slate-900 hover:bg-gray-50'
+          }`}
+        >
+          <Link size={14} />
+          Intégration SaaS & API
+        </button>
+        <button
+          onClick={() => setActiveTab('redirection')}
+          className={`px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all duration-300 flex items-center gap-2 ${
+            activeTab === 'redirection'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-gray-400 hover:text-slate-900 hover:bg-gray-50'
+          }`}
+        >
+          <Globe size={14} />
+          Redirection & Hébergement Hostinger
+        </button>
       </div>
 
       {activeTab === 'stores' ? (
@@ -792,6 +1169,8 @@ export default function SuperAdmin() {
               <thead>
                 <tr className="bg-gray-50/50">
                   <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Boutique</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Chiffre d'Affaires</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Ventes</th>
                   <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Status Licence</th>
                   <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Expiration</th>
                   <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Utilisateurs</th>
@@ -802,6 +1181,9 @@ export default function SuperAdmin() {
                 {filteredStores.map((store) => {
                   const storeUsers = allUsers.filter(u => u.storeId === store.id);
                   const isExpired = new Date(store.licenseExpiry || '') < new Date();
+                  const storeSales = globalSales.filter(s => s.storeId === store.id);
+                  const storeSalesAmount = storeSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+                  const storeSalesCount = storeSales.length;
                   
                   return (
                     <tr key={`table-store-${store.id}`} className="hover:bg-gray-50/80 transition-colors group">
@@ -819,6 +1201,16 @@ export default function SuperAdmin() {
                             <p className="text-[10px] text-gray-400 font-mono">ID: {store.id}</p>
                           </div>
                         </div>
+                      </td>
+                      <td className="px-8 py-6">
+                        <span className="font-extrabold text-xs text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100/50">
+                          {storeSalesAmount.toLocaleString('de-DE')} FCFA
+                        </span>
+                      </td>
+                      <td className="px-8 py-6">
+                        <span className="font-extrabold text-xs text-pink-600 bg-pink-50 px-3 py-1.5 rounded-xl border border-pink-100/50">
+                          {storeSalesCount}
+                        </span>
                       </td>
                       <td className="px-8 py-6">
                         <span className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2 w-fit ${
@@ -935,7 +1327,7 @@ export default function SuperAdmin() {
             </table>
           </div>
         </div>
-      ) : (
+      ) : activeTab === 'connections' ? (
         <div className="bg-white rounded-[40px] border border-gray-100 shadow-xl shadow-gray-200/30 overflow-hidden">
           <div className="px-8 py-6 border-b border-gray-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -1075,6 +1467,426 @@ export default function SuperAdmin() {
             </table>
           </div>
         </div>
+      ) : activeTab === 'saas' ? (
+        /* SaaS & Webhook Integration Tab */
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Form & Settings Card */}
+          <div className="bg-white rounded-[40px] p-8 border border-gray-100 shadow-xl shadow-gray-200/30 flex flex-col gap-6">
+            <div>
+              <h2 className="text-xl font-black text-gray-900 tracking-tight uppercase italic flex items-center gap-2">
+                <Link size={20} className="text-orange-500" />
+                Configuration Centralisée
+              </h2>
+              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">
+                Liez cette application à votre plateforme SaaS externe
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-5">
+              {/* SaaS Target URL */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">URL de l'API de votre SaaS</label>
+                <input 
+                  type="url"
+                  placeholder="https://votre-saas.com/api/v1/market-sync"
+                  value={saasUrl}
+                  onChange={(e) => setSaasUrl(e.target.value)}
+                  className="px-4 py-3 bg-gray-50 text-xs font-bold text-gray-800 rounded-2xl border border-gray-100 outline-none focus:ring-2 focus:ring-orange-500/20 w-full font-mono"
+                />
+                <span className="text-[9px] text-gray-400 font-medium">Les événements (synchronisations) y seront envoyés via requête POST.</span>
+              </div>
+
+              {/* Security Jeton / Token */}
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">Jeton de Sécurité / Clé d'API (SaaS Token)</label>
+                  <button 
+                    onClick={generateSecureToken}
+                    className="text-[9px] font-black uppercase text-orange-500 hover:text-black tracking-widest transition-all"
+                  >
+                    Générer une clé
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <input 
+                    type="text"
+                    placeholder="Saisissez ou générez un jeton d'authentification"
+                    value={saasToken}
+                    onChange={(e) => setSaasToken(e.target.value)}
+                    className="px-4 py-3 bg-gray-50 text-xs font-bold text-gray-800 rounded-2xl border border-gray-100 outline-none focus:ring-2 focus:ring-orange-500/20 w-full font-mono"
+                  />
+                </div>
+                <span className="text-[9px] text-gray-400 font-medium">Sert à authentifier les requêtes montantes et descendantes de manière sécurisée.</span>
+              </div>
+
+              {/* Sync settings */}
+              <div className="bg-gray-50/50 p-4 rounded-3xl border border-gray-100 flex items-center justify-between mt-2 font-sans">
+                <div className="flex flex-col font-sans">
+                  <span className="text-xs font-bold text-gray-900">Activer la Synchronisation</span>
+                  <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider mt-0.5">Automatique en arrière-plan</span>
+                </div>
+                <button 
+                  onClick={() => setSaasSyncEnabled(!saasSyncEnabled)}
+                  className={`w-12 h-6 rounded-full transition-all relative ${saasSyncEnabled ? 'bg-orange-500' : 'bg-gray-200'}`}
+                >
+                  <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${saasSyncEnabled ? 'left-7' : 'left-1'}`} />
+                </button>
+              </div>
+
+              {/* Save SaaS configuration button */}
+              <button
+                onClick={() => handleUpdateSaaSConfig(saasUrl, saasToken, saasSyncEnabled)}
+                className="w-full py-3.5 bg-slate-900 hover:bg-black text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-md flex items-center justify-center gap-2 mt-2"
+              >
+                <CheckCircle2 size={14} />
+                Enregistrer la Configuration
+              </button>
+            </div>
+
+            <hr className="border-gray-100" />
+
+            {/* Manual synchronization control panel */}
+            <div className="flex flex-col gap-4">
+              <div>
+                <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest">Synchronisation Manuelle</h3>
+                <p className="text-[9px] text-gray-400 font-medium mt-1">Transférez immédiatement un rapport global consolidé de toutes vos boutiques abonnées, ventes de la plateforme et statistiques à votre serveur SaaS central.</p>
+              </div>
+
+              <button
+                onClick={handleSyncSnapshotToSaaS}
+                disabled={isSyncingSaaS}
+                className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2 ${
+                  isSyncingSaaS 
+                    ? 'bg-slate-100 text-gray-405 cursor-not-allowed'
+                    : 'bg-orange-500 text-white hover:bg-black'
+                }`}
+              >
+                <RefreshCcw size={14} className={isSyncingSaaS ? 'animate-spin' : ''} />
+                {isSyncingSaaS ? 'Transmission en cours...' : 'Pousser le Snapshot complet vers le SaaS'}
+              </button>
+            </div>
+          </div>
+
+          {/* Webhook & Log Card */}
+          <div className="flex flex-col gap-8">
+            {/* Documentation Webhook Card */}
+            <div className="bg-slate-950 rounded-[40px] p-8 text-white border border-slate-900 shadow-xl flex flex-col gap-5">
+              <div>
+                <span className="px-3 py-1 bg-orange-500/10 text-orange-500 text-[8px] font-black uppercase tracking-widest rounded-full border border-orange-500/20">
+                  DEVELOPPEURS / WEBHOOK
+                </span>
+                <h2 className="text-xl font-black text-white tracking-tight uppercase italic mt-4 flex items-center gap-2">
+                  <Terminal size={20} className="text-orange-500" />
+                  API Webhook Entrant
+                </h2>
+                <p className="text-[10px] text-white/50 font-bold uppercase tracking-widest mt-1">
+                  Pilotez cette application depuis votre SaaS central
+                </p>
+              </div>
+
+              <p className="text-[11px] text-white/70 leading-relaxed font-sans">
+                Votre SaaS peut modifier automatiquement le statut de licence d'une boutique (ex: l'activer après validation d'un paiement Stripe, la suspendre en cas de rejet de facturation) en envoyant une requête <span className="bg-white/10 px-1 py-0.5 rounded font-mono text-[9px] text-white">POST</span> sécurisée :
+              </p>
+
+              {/* Endpoint Display */}
+              <div className="bg-white/5 p-3.5 rounded-2xl border border-white/10 flex flex-col gap-1.5 font-mono">
+                <span className="text-[8px] font-black uppercase text-white/40">URL DE L'API WEBHOOK</span>
+                <span className="text-[11px] text-orange-400 font-bold break-all">
+                  {window.location.origin}/api/saas/webhook
+                </span>
+              </div>
+
+              {/* sample JSON payload */}
+              <div className="flex flex-col gap-2">
+                <span className="text-[8px] font-black uppercase text-white/40 tracking-wider">Structure du JSON attendu :</span>
+                <pre className="bg-black/40 border border-white/10 p-4 rounded-2xl text-[10px] font-mono text-emerald-400 overflow-x-auto leading-relaxed">
+{`{
+  "storeId": "ID_DE_LA_BOUTIQUE",
+  "licenseStatus": "active" | "suspended",
+  "licenseExpiry": "yyyy-MM-dd",
+  "token": "${saasToken || 'VOTRE_JETON_SÉCURISÉ'}"
+}`}
+                </pre>
+              </div>
+            </div>
+
+            {/* Outgoing sync log panel */}
+            <div className="bg-white rounded-[40px] p-8 border border-gray-100 shadow-xl shadow-gray-200/30 flex-1 flex flex-col gap-4">
+              <div>
+                <h3 className="text-xs font-black text-gray-950 uppercase tracking-widest flex items-center gap-1.5">
+                  <Activity size={14} className="text-orange-500" />
+                  Logs en temps réel des transactions SaaS
+                </h3>
+                <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest mt-1">
+                  Dernières requêtes de connexion poussées
+                </p>
+              </div>
+
+              <div className="flex-1 overflow-y-auto max-h-[220px] flex flex-col gap-2.5 pr-2">
+                {saasSyncLogs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-center text-gray-400 border border-dashed border-gray-100 rounded-3xl h-full">
+                    <Terminal size={24} className="opacity-35 mb-2" />
+                    <p className="text-[10px] font-bold uppercase tracking-wider">Aucune tentative de synchronisation enregistrée</p>
+                    <p className="text-[9px] opacity-70">Enregistrez les paramètres et poussez un snapshot pour tester.</p>
+                  </div>
+                ) : (
+                  saasSyncLogs.map((log, index) => (
+                    <div key={`saas-log-${index}`} className="p-3 bg-gray-50 rounded-2xl border border-gray-100/50 flex flex-col gap-2 text-[10px] font-sans">
+                      <div className="flex items-center justify-between font-sans">
+                        <span className="font-extrabold text-[9px] text-slate-800 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200/50">
+                          {log.type}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[8px] font-mono text-gray-400">{log.timestamp}</span>
+                          <span className={`px-2 py-0.5 font-bold uppercase text-[8px] rounded-lg ${
+                            log.status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                          }`}>
+                            {log.status === 'success' ? 'Succès' : 'Échec'}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-gray-600 font-medium leading-relaxed leading-[1.3]">{log.details}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Redirection & Hostinger Helper Tab */
+        <div className="bg-white rounded-[40px] p-8 border border-gray-100 shadow-xl shadow-gray-200/30 flex flex-col gap-8">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-50 pb-6">
+            <div>
+              <h2 className="text-xl font-black text-gray-900 tracking-tight uppercase italic flex items-center gap-2">
+                <Globe size={24} className="text-orange-500" />
+                Guide d'Intégration & Redirection Hostinger
+              </h2>
+              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">
+                Liez élégamment votre nom de domaine personnalisé Hostinger ou autre hébergeur à cette application
+              </p>
+            </div>
+            
+            <div className="flex items-center gap-3">
+              {/* Force Disable Redirect in case they get stuck */}
+              <button 
+                onClick={async () => {
+                  try {
+                    const configRef = doc(db, 'systemConfig', 'globals');
+                    await setDoc(configRef, { 
+                      isAutoRedirectEnabled: false,
+                      updatedAt: serverTimestamp()
+                    }, { merge: true });
+                    alert("Redirection automatique désactivée avec succès pour le déboguage !");
+                  } catch (e: any) {
+                    alert("Erreur: " + e.message);
+                  }
+                }}
+                className="px-4 py-2 bg-red-50 hover:bg-red-600 text-red-600 hover:text-white rounded-xl transition-all font-black text-[10px] uppercase tracking-wider shadow-sm flex items-center gap-1.5"
+              >
+                <Power size={12} />
+                Désactiver l'auto-redirection
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Status & Troubleshooting panel */}
+            <div className="lg:col-span-1 flex flex-col gap-6">
+              <div className="p-6 bg-slate-900 text-white rounded-[32px] flex flex-col gap-4 shadow-lg relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full blur-2xl pointer-events-none" />
+                <h3 className="text-xs font-black uppercase text-orange-400 tracking-wider flex items-center gap-1.5 border-b border-white/10 pb-3">
+                  <ShieldAlert size={14} />
+                  État du Redirectionneur
+                </h3>
+                
+                <div className="flex flex-col gap-3.5 text-xs text-gray-300 font-sans">
+                  <div className="flex justify-between items-center bg-white/5 p-2.5 rounded-xl border border-white/5">
+                    <span>Hôte Actuel :</span>
+                    <span className="font-mono text-[10px] text-white bg-white/10 px-2 py-0.5 rounded font-black max-w-[150px] overflow-hidden text-ellipsis">{window.location.hostname}</span>
+                  </div>
+                  
+                  <div className="flex justify-between items-center bg-white/5 p-2.5 rounded-xl border border-white/5">
+                    <span>Redirection Auto :</span>
+                    <span className={`font-black text-[10px] px-2 py-0.5 rounded ${systemConfig?.isAutoRedirectEnabled ? 'bg-orange-500/20 text-orange-400' : 'bg-white/10 text-gray-400'}`}>
+                      {systemConfig?.isAutoRedirectEnabled ? 'ACTIF (ON)' : 'INACTIF (OFF)'}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between items-center bg-white/5 p-2.5 rounded-xl border border-white/5">
+                    <span>URL Cible :</span>
+                    <span className="font-mono text-[10px] text-orange-300 overflow-hidden text-ellipsis max-w-[130px] whitespace-nowrap" title={systemConfig?.publicAccessUrl || 'Non spécifiée'}>
+                      {systemConfig?.publicAccessUrl || 'Non spécifiée'}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between items-center bg-white/5 p-2.5 rounded-xl border border-white/5">
+                    <span>Lien Cloud Run :</span>
+                    <span className="font-mono text-[10px] text-green-300 overflow-hidden text-ellipsis max-w-[130px] whitespace-nowrap" title="https://ais-pre-6aefxx3cvl6ifeis7ritna-207000887551.europe-west2.run.app">
+                      https://ais-pre-6aefxx3cvl6ifeis7ritna-207000887551...
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-2 text-[10px] text-gray-400 leading-relaxed border-t border-white/10 pt-3">
+                  💡 En cochant <strong>Auto-Redirect</strong> ou en copiant les scripts ci-contre, vous pouvez créer un couplage parfait sans l'erreur 404 "Page introuvable".
+                </div>
+              </div>
+
+              <div className="p-6 bg-orange-50/50 border border-orange-100 rounded-[32px] flex flex-col gap-3">
+                <h3 className="text-xs font-black text-orange-950 uppercase tracking-widest flex items-center gap-2">
+                  <AlertTriangle size={14} className="text-orange-500" />
+                  Résoudre la page introuvable (404)
+                </h3>
+                <p className="text-[10px] text-orange-850 leading-relaxed font-semibold">
+                  Si vous accédez à l'application dans un nouvel onglet et voyez "Page introuvable sur le serveur" :
+                </p>
+                <ol className="text-[9.5px] text-orange-900 leading-relaxed list-decimal pl-4 flex flex-col gap-1.5 font-medium">
+                  <li>L'application s'ouvre dans l'iframe via AI Studio. Dans un nouvel onglet sans connection active au studio, cela nécessite que les services soient propagés.</li>
+                  <li>Si vous avez activé "Redirection Domaine" vers un lien Hostinger invalide, l'application vous redirige directement sur ce lien cassé. Utilisez le bouton rouge ci-dessus pour couper l'auto-redirection.</li>
+                  <li>Sur Hostinger ou votre hébergeur, veillez à utiliser l'un des snippets ci-contre pour assurer le routage correct des pages de l'application sans conflit de réécriture.</li>
+                </ol>
+              </div>
+            </div>
+
+            {/* Snippets Generator */}
+            <div className="lg:col-span-2 flex flex-col gap-6 font-sans">
+              <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest pl-2 border-l-2 border-orange-500">
+                Codes de Redirection Clés en Main à Coller sur Hostinger
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                {/* PHP Custom Script Card */}
+                <div className="bg-gray-50 border border-gray-100 p-5 rounded-[24px] flex flex-col gap-3 h-full">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-900">Méthode 1 : Script PHP (Recommandé)</h4>
+                      <p className="text-[8.5px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">À insérer dans index.php à la racine du site</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        const code = "<?php\n// Redirection vers l'application MARKET PRO sur Cloud Run\n$app_url = 'https://ais-pre-6aefxx3cvl6ifeis7ritna-207000887551.europe-west2.run.app';\n$request_uri = $_SERVER['REQUEST_URI'] ?? '';\nheader('Location: ' . $app_url . $request_uri, true, 301);\nexit();\n?>";
+                        navigator.clipboard.writeText(code);
+                        alert("Code PHP copié avec succès !");
+                      }}
+                      className="px-2.5 py-1 bg-white border border-gray-200 text-gray-700 hover:text-orange-500 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-sm transition-all active:scale-95"
+                    >
+                      Copier
+                    </button>
+                  </div>
+                  <pre className="p-3 bg-slate-900 text-emerald-400 font-mono text-[9px] rounded-xl overflow-x-auto leading-relaxed border border-gray-200/50 block w-full max-h-[140px]">
+{`<?php
+// PHP Redirection fluide
+$app_url = "https://ais-pre-6aefxx3cvl6ifeis7ritna-207000887551.europe-west2.run.app";
+$request_uri = $_SERVER['REQUEST_URI'] ?? '';
+header("Location: " . $app_url . $request_uri, true, 301);
+exit();
+?>`}
+                  </pre>
+                  <p className="text-[9px] text-gray-400 leading-relaxed font-semibold">
+                    Cette méthode transmet proprement l'intégralité du chemin et des paramètres à votre application web.
+                  </p>
+                </div>
+
+                {/* HTML Iframe Card */}
+                <div className="bg-gray-50 border border-gray-100 p-5 rounded-[24px] flex flex-col gap-3 h-full">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-900">Méthode 2 : Intégration Iframe</h4>
+                      <p className="text-[8.5px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">Pour conserver votre nom de domaine dans l'URL</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        const code = '<!DOCTYPE html>\n<html lang="fr">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">\n    <title>MARKET PRO - Gestion Supermarché</title>\n    <style>\n        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #0f172a; }\n        iframe { border: none; width: 100%; height: 100%; display: block; }\n    </style>\n</head>\n<body>\n    <iframe src="https://ais-pre-6aefxx3cvl6ifeis7ritna-207000887551.europe-west2.run.app" allow="camera; microphone; geolocation; clipboard-write; clipboard-read"></iframe>\n</body>\n</html>';
+                        navigator.clipboard.writeText(code);
+                        alert("Code HTML Iframe copié avec succès !");
+                      }}
+                      className="px-2.5 py-1 bg-white border border-gray-200 text-gray-700 hover:text-orange-500 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-sm transition-all active:scale-95"
+                    >
+                      Copier
+                    </button>
+                  </div>
+                  <pre className="p-3 bg-slate-900 text-emerald-400 font-mono text-[9px] rounded-xl overflow-x-auto leading-relaxed border border-gray-200/50 block w-full max-h-[140px]">
+{`<!DOCTYPE html>
+<html lang="fr">
+<head>
+    ...
+</head>
+<body>
+    <iframe src="https://ais-pre-6...run.app" class="w-full h-full" allow="camera; microphone; geolocation"></iframe>
+</body>
+</html>`}
+                  </pre>
+                  <p className="text-[9px] text-gray-400 leading-relaxed font-semibold">
+                    Idéal pour masquer l'adresse technique de partage de l'application et afficher directement votre domaine à l'écran.
+                  </p>
+                </div>
+
+                {/* htaccess Card */}
+                <div className="bg-gray-50 border border-gray-100 p-5 rounded-[24px] flex flex-col gap-3 h-full">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-900">Méthode 3 : `.htaccess` Apache</h4>
+                      <p className="text-[8.5px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">Redirection globale via le serveur Apache</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        const code = 'RewriteEngine On\n# Rediriger l\'intégralité du trafic sans rupture vers l\'application MARKET PRO\nRewriteCond %{HTTP_HOST} ^(www\\.)?(.+)$ [NC]\nRewriteRule ^(.*)$ https://ais-pre-6aefxx3cvl6ifeis7ritna-207000887551.europe-west2.run.app/$1 [L,R=301,NE,QSA]';
+                        navigator.clipboard.writeText(code);
+                        alert("Snippet .htaccess copié avec succès !");
+                      }}
+                      className="px-2.5 py-1 bg-white border border-gray-200 text-gray-700 hover:text-orange-500 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-sm transition-all active:scale-95"
+                    >
+                      Copier
+                    </button>
+                  </div>
+                  <pre className="p-3 bg-slate-900 text-emerald-400 font-mono text-[9px] rounded-xl overflow-x-auto leading-relaxed border border-gray-200/50 block w-full max-h-[140px]">
+{`RewriteEngine On
+RewriteRule ^(.*)$ https://ais-pre-6...run.app/$1 [L,R=301,NE,QSA]`}
+                  </pre>
+                  <p className="text-[9px] text-gray-400 leading-relaxed font-semibold">
+                    Redirige instantanément tous les requérants de votre domaine d'origine vers l'application fonctionnelle sur le Cloud.
+                  </p>
+                </div>
+
+                {/* HTML & JS Fallback Card */}
+                <div className="bg-gray-50 border border-gray-100 p-5 rounded-[24px] flex flex-col gap-3 h-full">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-900">Méthode 4 : Redirection Javascript</h4>
+                      <p className="text-[8.5px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">À insérer dans un fichier index.html simple</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        const code = '<!DOCTYPE html>\n<html>\n<head>\n    <title>MARKET PRO - Redirection</title>\n    <meta http-equiv="refresh" content="0; url=https://ais-pre-6aefxx3cvl6ifeis7ritna-207000887551.europe-west2.run.app">\n    <script type="text/javascript">\n        window.location.replace("https://ais-pre-6aefxx3cvl6ifeis7ritna-207000887551.europe-west2.run.app" + window.location.pathname + window.location.search);\n    </script>\n</head>\n<body>\n    <p style="font-family: sans-serif; text-align: center; margin-top: 20%; color: #475569;">\n        Chargement de l\'application MARKET PRO en cours...\n    </p>\n</body>\n</html>';
+                        navigator.clipboard.writeText(code);
+                        alert("Code JS de redirection copié avec succès !");
+                      }}
+                      className="px-2.5 py-1 bg-white border border-gray-200 text-gray-700 hover:text-orange-500 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-sm transition-all active:scale-95"
+                    >
+                      Copier
+                    </button>
+                  </div>
+                  <pre className="p-3 bg-slate-900 text-emerald-400 font-mono text-[9px] rounded-xl overflow-x-auto leading-relaxed border border-gray-200/50 block w-full max-h-[140px]">
+{`<!DOCTYPE html>
+<html>
+<head>
+    <script>
+        window.location.replace("https://ais-pre-6...run.app" + window.location.pathname);
+    </script>
+</head>
+</html>`}
+                  </pre>
+                  <p className="text-[9px] text-gray-400 leading-relaxed font-semibold">
+                    Redirige côté client de manière instantanée avec un rafraîchissement meta de secours si JS est désactivé.
+                  </p>
+                </div>
+                
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Store Detail Modal */}
@@ -1149,6 +1961,91 @@ export default function SuperAdmin() {
                             Expire le : {selectedStore.licenseExpiry ? new Date(selectedStore.licenseExpiry).toLocaleDateString() : 'N/A'}
                          </p>
                       </div>
+                    </div>
+
+                    {/* Administrateur & Identifiants Card */}
+                    <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 flex flex-col gap-4">
+                      <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Identifiants de Connexion Admin</h4>
+                        {!editingAdminUser && storeAdminUser && (
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              setEditingAdminUser(storeAdminUser);
+                              setEditedAdminEmail(storeAdminUser.email || '');
+                              setEditedAdminPassword(storeAdminUser.password || '');
+                            }}
+                            className="text-[10px] font-black text-orange-600 uppercase tracking-widest hover:underline cursor-pointer"
+                          >
+                            Modifier
+                          </button>
+                        )}
+                      </div>
+                      
+                      {storeAdminUser ? (
+                        editingAdminUser && editingAdminUser.uid === storeAdminUser.uid ? (
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Email Administrateur</label>
+                              <input 
+                                type="email"
+                                value={editedAdminEmail}
+                                onChange={(e) => setEditedAdminEmail(e.target.value)}
+                                className="w-full text-xs px-3.5 py-2.5 bg-white border border-gray-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-orange-500/10 transition-all text-slate-800"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Nouveau Mot de passe</label>
+                              <input 
+                                type="text"
+                                placeholder="Nouveau mot de passe"
+                                value={editedAdminPassword}
+                                onChange={(e) => setEditedAdminPassword(e.target.value)}
+                                className="w-full text-xs px-3.5 py-2.5 bg-white border border-gray-200 rounded-xl font-mono font-bold outline-none focus:ring-2 focus:ring-orange-500/10 transition-all text-slate-800"
+                              />
+                            </div>
+                            <div className="flex gap-2 pt-2">
+                              <button 
+                                type="button"
+                                onClick={() => setEditingAdminUser(null)}
+                                className="flex-1 py-2 bg-gray-200 hover:bg-gray-300 text-slate-600 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all"
+                                disabled={isUpdatingCredentials}
+                              >
+                                Annuler
+                              </button>
+                              <button 
+                                type="button"
+                                onClick={() => handleUpdateAdminCredentials(storeAdminUser.uid, editedAdminEmail, editedAdminPassword)}
+                                className="flex-1 py-2 bg-slate-900 hover:bg-black text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-55"
+                                disabled={isUpdatingCredentials}
+                              >
+                                {isUpdatingCredentials ? "Enregistrement..." : "Enregistrer"}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Email Admin</span>
+                              <span className="text-xs font-bold text-slate-700 bg-white border border-gray-50 rounded-xl px-3 py-2 select-all flex items-center gap-1.5 overflow-x-auto truncate">
+                                <Mail size={12} className="text-slate-400 shrink-0" />
+                                {storeAdminUser.email}
+                              </span>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Mot de passe</span>
+                              <span className="text-xs font-mono font-bold text-slate-700 bg-white border border-gray-50 rounded-xl px-3 py-1.5 select-all flex items-center gap-1.5 overflow-x-auto truncate">
+                                <Lock size={12} className="text-slate-400 shrink-0" />
+                                {storeAdminUser.password || <span className="italic text-gray-400 font-sans">Non enregistré (cliquez Modifier pour en définir un)</span>}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      ) : (
+                        <div className="text-center py-2">
+                          <p className="text-[10px] text-gray-400 font-bold leading-relaxed">Aucun compte administrateur trouvé pour cette boutique.</p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1294,6 +2191,83 @@ export default function SuperAdmin() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Custom Confirmation Modal */}
+        {confirmModal && confirmModal.isOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={confirmModal.onCancel}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-md overflow-hidden rounded-[32px] shadow-2xl border border-gray-100 p-8 relative z-10"
+            >
+              <div className="w-12 h-12 bg-orange-50 text-orange-500 rounded-2xl flex items-center justify-center mb-6">
+                <AlertTriangle size={24} />
+              </div>
+              <h3 className="text-xl font-black text-slate-900 tracking-tight mb-2 uppercase italic">{confirmModal.title}</h3>
+              <p className="text-sm text-slate-500 leading-relaxed mb-8">{confirmModal.message}</p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={confirmModal.onCancel}
+                  className="flex-1 py-3.5 bg-gray-50 hover:bg-gray-100 text-slate-500 rounded-xl font-bold text-xs uppercase tracking-widest transition-all"
+                >
+                  Annuler
+                </button>
+                <button 
+                  onClick={confirmModal.onConfirm}
+                  className="flex-1 py-3.5 bg-slate-900 hover:bg-black text-white rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-lg active:scale-95"
+                >
+                  Confirmer
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Custom Alert Modal */}
+        {alertModal && alertModal.isOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setAlertModal(null)}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-md overflow-hidden rounded-[32px] shadow-2xl border border-gray-100 p-8 relative z-10"
+            >
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-6 ${
+                alertModal.type === 'error' ? 'bg-red-50 text-red-500' : 
+                alertModal.type === 'success' ? 'bg-green-50 text-green-500' : 'bg-blue-50 text-blue-500'
+              }`}>
+                {alertModal.type === 'error' ? <ShieldAlert size={24} /> : 
+                 alertModal.type === 'success' ? <CheckCircle2 size={24} /> : <Activity size={24} />}
+              </div>
+              <h3 className="text-xl font-black text-slate-900 tracking-tight mb-2 uppercase italic">{alertModal.title}</h3>
+              <p className="text-sm text-slate-500 leading-relaxed mb-8">{alertModal.message}</p>
+              <button 
+                onClick={() => setAlertModal(null)}
+                className={`w-full py-3.5 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-md active:scale-95 ${
+                  alertModal.type === 'error' ? 'bg-red-600 hover:bg-red-700 text-white' : 
+                  alertModal.type === 'success' ? 'bg-slate-900 hover:bg-black text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'
+                }`}
+              >
+                Fermer
+              </button>
             </motion.div>
           </div>
         )}

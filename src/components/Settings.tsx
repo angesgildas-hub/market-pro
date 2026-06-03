@@ -74,12 +74,15 @@ export default function Settings() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+  const [usersSubTab, setUsersSubTab] = useState<'list' | 'matrix'>('list');
+  const [matrixDrafts, setMatrixDrafts] = useState<Record<string, UserPermissions>>({});
 
   // Sensitive Settings Password
   const [isSetPasswordOpen, setIsSetPasswordOpen] = useState(false);
   const [isVerifyPasswordOpen, setIsVerifyPasswordOpen] = useState(false);
   const [verifiedTabs, setVerifiedTabs] = useState<string[]>([]);
   const [settingsPasswordInput, setSettingsPasswordInput] = useState('');
+  const [verifyPasswordError, setVerifyPasswordError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<{ type: string; data?: any } | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [restoreData, setRestoreData] = useState<any>(null);
@@ -152,6 +155,7 @@ export default function Settings() {
       setIsSetPasswordOpen(true);
       return;
     }
+    setVerifyPasswordError(null);
     setPendingAction({ type: actionType, data: actionData });
     setIsVerifyPasswordOpen(true);
   };
@@ -163,6 +167,7 @@ export default function Settings() {
       setPendingAction(null);
       setIsVerifyPasswordOpen(false);
       setSettingsPasswordInput('');
+      setVerifyPasswordError(null);
       
       switch (action?.type) {
         case 'RESET': executeSystemReset(); break;
@@ -182,7 +187,8 @@ export default function Settings() {
            break;
       }
     } else {
-      alert("Mot de passe de sécurité incorrect.");
+      setSettingsPasswordInput('');
+      setVerifyPasswordError("Mot de passe incorrect, veuillez réessayer.");
     }
   };
 
@@ -196,6 +202,24 @@ export default function Settings() {
     clients: { read: true, create: true, update: true, delete: true },
     sales: { read: true, create: false, update: false, delete: false }
   });
+
+  const fullAdminPermissions = (): UserPermissions => ({
+    pos: { read: true, create: true, update: true, delete: true },
+    inventory: { read: true, create: true, update: true, delete: true },
+    accounting: { read: true, create: true, update: true, delete: true },
+    settings: { read: true, create: true, update: true, delete: true },
+    reports: { read: true, create: true, update: true, delete: true },
+    personnel: { read: true, create: true, update: true, delete: true },
+    clients: { read: true, create: true, update: true, delete: true },
+    sales: { read: true, create: true, update: true, delete: true }
+  });
+
+  const getUserDefaultPermissions = (email: string): UserPermissions => {
+    if (email === 'anges.gildas@gmail.com') {
+      return fullAdminPermissions();
+    }
+    return defaultPermissions();
+  };
 
   const createAuditLog = async (action: string, details: string) => {
     if (!userProfile?.storeId) {
@@ -363,6 +387,96 @@ export default function Settings() {
     }
   };
 
+  const handleToggleMatrixPermission = (uid: string, module: keyof UserPermissions, action: keyof ModulePermissions, currentValue: boolean) => {
+    const userToUpdate = users.find(u => u.uid === uid);
+    if (!userToUpdate) return;
+    
+    const userPermissions = matrixDrafts[uid] || userToUpdate.permissions || getUserDefaultPermissions(userToUpdate.email || '');
+    const newPermissions = {
+      ...userPermissions,
+      [module]: {
+        ...(userPermissions[module] || { read: false, create: false, update: false, delete: false }),
+        [action]: !currentValue
+      }
+    };
+    
+    setMatrixDrafts(prev => ({
+      ...prev,
+      [uid]: newPermissions
+    }));
+  };
+
+  const handleApplyRolePresets = (uid: string, role: UserRole) => {
+    const userToUpdate = users.find(u => u.uid === uid);
+    if (!userToUpdate) return;
+    
+    let newPermissions = getUserDefaultPermissions(userToUpdate.email || '');
+    if (role === 'cashier') {
+      newPermissions = {
+        pos: { read: true, create: true, update: true, delete: true },
+        inventory: { read: false, create: false, update: false, delete: false },
+        accounting: { read: false, create: false, update: false, delete: false },
+        settings: { read: false, create: false, update: false, delete: false },
+        reports: { read: false, create: false, update: false, delete: false },
+        personnel: { read: false, create: false, update: false, delete: false },
+        clients: { read: true, create: true, update: true, delete: false },
+        sales: { read: true, create: false, update: false, delete: false }
+      };
+    } else if (role === 'manager') {
+      newPermissions = {
+        pos: { read: true, create: true, update: true, delete: true },
+        inventory: { read: true, create: true, update: true, delete: true },
+        accounting: { read: true, create: true, update: true, delete: false },
+        settings: { read: false, create: false, update: false, delete: false },
+        reports: { read: true, create: true, update: true, delete: false },
+        personnel: { read: true, create: true, update: true, delete: false },
+        clients: { read: true, create: true, update: true, delete: true },
+        sales: { read: true, create: true, update: true, delete: true }
+      };
+    } else if (role === 'admin') {
+      newPermissions = {
+        pos: { read: true, create: true, update: true, delete: true },
+        inventory: { read: true, create: true, update: true, delete: true },
+        accounting: { read: true, create: true, update: true, delete: true },
+        settings: { read: true, create: true, update: true, delete: true },
+        reports: { read: true, create: true, update: true, delete: true },
+        personnel: { read: true, create: true, update: true, delete: true },
+        clients: { read: true, create: true, update: true, delete: true },
+        sales: { read: true, create: true, update: true, delete: true }
+      };
+    }
+    
+    setMatrixDrafts(prev => ({
+      ...prev,
+      [uid]: newPermissions
+    }));
+  };
+
+  const handleSaveMatrixDrafts = async () => {
+    const uids = Object.keys(matrixDrafts);
+    if (uids.length === 0) {
+      alert("Aucune modification à enregistrer.");
+      return;
+    }
+    
+    setIsActionLoading(true);
+    try {
+      for (const uid of uids) {
+        const permissions = matrixDrafts[uid];
+        await updateDoc(doc(db, 'users', uid), { permissions });
+        const userObj = users.find(u => u.uid === uid);
+        await createAuditLog('USER_PERMISSIONS_UPDATED', `Matrice: Perms mis à jour en masse pour ${userObj?.displayName || uid}.`);
+      }
+      setMatrixDrafts({});
+      alert("Modifications effectuées avec succès !");
+    } catch (e: any) {
+      console.error("Error saving matrix drafts:", e);
+      alert("Une erreur est survenue lors de l'enregistrement de la matrice.");
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const handleToggleUserStatus = async (uid: string, currentStatus: boolean = true) => {
     if (uid === auth.currentUser?.uid) {
        alert("Vous ne pouvez pas désactiver votre propre compte.");
@@ -426,7 +540,7 @@ export default function Settings() {
         displayName: name,
         role,
         storeId: userProfile?.storeId,
-        permissions: defaultPermissions(),
+        permissions: getUserDefaultPermissions(email),
         isActive: true,
         createdAt: serverTimestamp()
       });
@@ -672,15 +786,80 @@ export default function Settings() {
   };
 
   const tabs = [
-    { id: 'store', label: isSuperAdmin ? 'Paramètres Système' : 'Boutique', icon: isSuperAdmin ? Globe : ShoppingBag, description: isSuperAdmin ? 'Configuration globale de l\'application et redirections.' : 'Configure store name, logo, address and contact.' },
-    { id: 'profile', label: t.profile, icon: User, description: 'Manage your personal information and avatar.' },
-    { id: 'security', label: t.security, icon: Shield, description: 'Configure 2FA and view active sessions.' },
-    { id: 'users', label: t.users, icon: Lock, description: 'Manage system users and their permissions.' },
-    { id: 'appearance', label: t.appearance, icon: Palette, description: 'Change theme and system language.' },
-    { id: 'backup', label: t.backup, icon: Database, description: 'Back up or restore your system data.' },
-    { id: 'audit', label: t.audit, icon: History, description: 'View system activity and security logs.' },
-    { id: 'license', label: 'Licence', icon: ShieldCheck, description: 'Manage system license and activation.' },
-    { id: 'about', label: t.about, icon: AlertCircle, description: 'System information and license status.' },
+    { 
+      id: 'store', 
+      label: isSuperAdmin ? 'Paramètres Système' : (language === 'fr' ? 'Boutique' : 'Store'), 
+      icon: isSuperAdmin ? Globe : ShoppingBag, 
+      description: isSuperAdmin 
+        ? 'Configuration globale de l\'application et redirections.' 
+        : (language === 'fr' 
+            ? 'Configurer le nom de la boutique, le logo, l\'adresse et le contact.' 
+            : 'Configure store name, logo, address and contact.') 
+    },
+    { 
+      id: 'profile', 
+      label: t.profile, 
+      icon: User, 
+      description: language === 'fr' 
+        ? 'Gérer vos informations personnelles et votre avatar.' 
+        : 'Manage your personal information and avatar.' 
+    },
+    { 
+      id: 'security', 
+      label: t.security, 
+      icon: Shield, 
+      description: language === 'fr' 
+        ? 'Configurer la double authentification et voir les sessions actives.' 
+        : 'Configure 2FA and view active sessions.' 
+    },
+    { 
+      id: 'users', 
+      label: language === 'fr' ? "Comptes & Matrice d'Accès" : "Accounts & Access Matrix", 
+      icon: Lock, 
+      description: language === 'fr' 
+        ? 'Gérer les comptes d\'accès, mots de passe et configurer la matrice globale de droits (Vente, Stock, Dépenses, RH).' 
+        : 'Manage system login accounts, passwords, and configure the global access rights matrix (Sales, Inventory, Expenses, HR).' 
+    },
+    { 
+      id: 'appearance', 
+      label: t.appearance, 
+      icon: Palette, 
+      description: language === 'fr' 
+        ? 'Changer le thème visuel et la langue du système.' 
+        : 'Change theme and system language.' 
+    },
+    { 
+      id: 'backup', 
+      label: t.backup, 
+      icon: Database, 
+      description: language === 'fr' 
+        ? 'Sauvegarder ou importer les fichiers de sauvegarde de l\'application.' 
+        : 'Back up or restore your system data.' 
+    },
+    { 
+      id: 'audit', 
+      label: t.audit, 
+      icon: History, 
+      description: language === 'fr' 
+        ? 'Consulter le journal d\'activité de sécurité et les logs d\'audit.' 
+        : 'View system activity and security logs.' 
+    },
+    { 
+      id: 'license', 
+      label: 'Licence', 
+      icon: ShieldCheck, 
+      description: language === 'fr' 
+        ? 'Gérer l\'état d\'activation de la licence de votre logiciel.' 
+        : 'Manage system license and activation.' 
+    },
+    { 
+      id: 'about', 
+      label: t.about, 
+      icon: AlertCircle, 
+      description: language === 'fr' 
+        ? 'Informations sur l\'application et statut de la licence.' 
+        : 'System information and license status.' 
+    },
   ];
 
   const [activationSuccess, setActivationSuccess] = useState(false);
@@ -1119,256 +1298,474 @@ export default function Settings() {
                        className="px-8 py-4 bg-white text-orange-600 border border-orange-200 rounded-[24px] font-black text-[10px] uppercase tracking-widest hover:bg-orange-50 transition-all flex items-center gap-2"
                      >
                        <Lock size={16} />
-                       Changer code paramètres
-                     </button>
-                   </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'users' && (
-              <div className="space-y-12">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
-                  <div>
-                    <h3 className="text-4xl font-black text-gray-900 mb-2">Annuaire Utilisateurs</h3>
-                    <p className="text-gray-500 font-medium">Gérez les accès et les permissions de votre équipe.</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="bg-orange-50 px-4 py-2 rounded-xl text-orange-600 font-black text-[10px] uppercase tracking-widest border border-orange-100">
-                      {users.length} Utilisateurs Actifs
-                    </div>
-                    {userRole === 'admin' && (
-                      <button 
-                        onClick={() => checkMasterPassword('ADD_USER')}
-                        className="bg-orange-500 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-orange-600 transition-all shadow-xl shadow-orange-500/20 active:scale-95"
-                      >
-                        <UserPlus size={16} />
-                        Ajouter
+                       Changer code
                       </button>
-                    )}
+                    </div>
+                 </div>
+               </div>
+             )}
+
+            {activeTab === 'users' && (() => {
+              const matrixModules = [
+                { key: 'pos', label: 'Caisse / Vente', desc: 'Gestion du point de vente et encaissements', icon: ShoppingBag },
+                { key: 'inventory', label: 'Inventaire', desc: 'Gestion des articles, stocks et catégories', icon: Database },
+                { key: 'accounting', label: 'Dépenses', desc: 'Saisie et suivi des frais d\'exploitation', icon: Shield },
+                { key: 'sales', label: 'Historique', desc: 'Consulter l\'historique des ventes', icon: History },
+                { key: 'clients', label: 'Clients', desc: 'Fichier client et fidélité', icon: User },
+                { key: 'personnel', label: 'Équipe & RH', desc: 'Contrats, congés et fiches de paie', icon: UserPlus },
+                { key: 'reports', label: 'Rapports', desc: 'Statistiques et performances financières', icon: ShieldCheck },
+                { key: 'settings', label: 'Configuration', desc: 'Paramètres système et sauvegardes', icon: Lock },
+              ] as const;
+
+              return (
+                <div className="space-y-12">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
+                    <div>
+                      <h3 className="text-4xl font-black text-gray-900 mb-2">Annuaire & Matrice d'Accès</h3>
+                      <p className="text-gray-500 font-medium font-sans">Gérez les accès, rôles et privilèges fines de l'ensemble de votre équipe.</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="bg-orange-50 px-4 py-2 rounded-xl text-orange-600 font-black text-[10px] uppercase tracking-widest border border-orange-100">
+                        {users.length} Utilisateurs Actifs
+                      </div>
+                      {userRole === 'admin' && (
+                        <button 
+                          onClick={() => checkMasterPassword('ADD_USER')}
+                          className="bg-orange-500 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-orange-600 transition-all shadow-xl shadow-orange-500/20 active:scale-95"
+                        >
+                          <UserPlus size={16} />
+                          Ajouter
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                <div className="bg-gray-900 p-8 rounded-[40px] text-white flex items-center justify-between shadow-2xl shadow-gray-300">
-                   <div className="flex items-center gap-6">
-                      <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center text-orange-500">
-                         <Shield size={28} />
-                      </div>
-                      <div>
-                         <p className="text-sm font-bold opacity-60">Votre Niveau d'Accès</p>
-                         <p className="text-xl font-black tracking-widest uppercase">{userRole}</p>
-                      </div>
-                   </div>
-                   {userRole === 'admin' && (
-                      <div className="hidden sm:block px-6 py-2 bg-white/10 rounded-xl text-[10px] font-bold uppercase tracking-widest border border-white/10">
-                        Privilèges Administrateur Actifs
-                      </div>
-                   )}
-                </div>
+                  <div className="bg-gray-900 p-8 rounded-[40px] text-white flex flex-col md:flex-row items-stretch md:items-center justify-between gap-6 shadow-2xl shadow-gray-300">
+                     <div className="flex items-center gap-6">
+                        <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center text-orange-500">
+                           <Shield size={28} />
+                        </div>
+                        <div>
+                           <p className="text-sm font-bold opacity-60">Votre Niveau d'Accès</p>
+                           <p className="text-xl font-black tracking-widest uppercase">{userRole}</p>
+                        </div>
+                     </div>
+                     <div className="flex bg-white/10 p-1 rounded-2xl border border-white/5">
+                        <button 
+                          onClick={() => setUsersSubTab('list')}
+                          className={`px-6 py-2.5 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all ${usersSubTab === 'list' ? 'bg-white text-gray-900 shadow-lg' : 'text-gray-300 hover:text-white'}`}
+                        >
+                          📋 Liste Annuaire
+                        </button>
+                        <button 
+                          onClick={() => setUsersSubTab('matrix')}
+                          className={`px-6 py-2.5 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all ${usersSubTab === 'matrix' ? 'bg-white text-gray-900 shadow-lg' : 'text-gray-300 hover:text-white'}`}
+                        >
+                          🎛️ Matrice d'Accès
+                        </button>
+                     </div>
+                  </div>
 
-                <div className="space-y-4">
-                   {users.map(u => (
-                     <div key={u.uid} className="flex flex-col bg-white rounded-[32px] border border-gray-100 hover:shadow-xl transition-all group overflow-hidden">
-                        <div className="flex flex-col lg:flex-row items-center justify-between p-6 gap-6">
-                           <div className="flex items-center gap-4 w-full lg:w-auto">
-                              <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-400 font-black text-lg overflow-hidden border border-gray-100">
-                                 {u.photoURL ? (
-                                   <img src={u.photoURL} alt="Avatar" className="w-full h-full object-cover" />
-                                 ) : (
-                                   u.displayName ? u.displayName[0] : <User size={20} />
-                                 )}
-                              </div>
-                              <div className="flex flex-col">
-                                <div className="flex items-center gap-2">
-                                  <p className="font-black text-gray-900">{u.displayName || 'Utilisateur Anonyme'}</p>
-                                  {u.isActive === false && (
-                                    <span className="bg-red-50 text-red-500 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest border border-red-100">Désactivé</span>
-                                  )}
-                                </div>
-                                <p className="text-xs text-gray-400 font-medium">{u.email}</p>
-                                <div className="mt-1 flex items-center gap-1">
-                                   <span className={`px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-widest ${u.role === 'admin' ? 'bg-orange-500 text-white' : u.role === 'manager' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                                     {u.role}
-                                   </span>
-                                </div>
-                              </div>
-                           </div>
-
-                           {/* DETAILED ACCESS MATRIX */}
-                           <div 
-                             onClick={() => setEditingUser(u)}
-                             className="flex flex-wrap gap-1.5 justify-center lg:justify-end flex-1 cursor-pointer hover:bg-gray-50 p-2 rounded-2xl transition-colors group/matrix"
-                             title="Cliquer pour modifier les permissions"
-                           >
-                              {(['pos', 'inventory', 'accounting', 'reports', 'personnel', 'settings'] as (keyof UserPermissions)[]).map(m => {
-                                const permissions = u.permissions?.[m] || { read: false, create: false, update: false, delete: false };
-                                const hasAccess = permissions.read || permissions.create || permissions.update || permissions.delete;
-                                return (
-                                  <div key={m} className={`p-2 rounded-xl border flex flex-col items-center gap-1 transition-all ${hasAccess ? 'bg-white border-orange-100 shadow-sm' : 'bg-gray-50/50 border-transparent opacity-20'}`}>
-                                    <span className="text-[7px] font-black uppercase tracking-tighter text-gray-400">
-                                      {m === 'pos' ? 'Vente' : m === 'inventory' ? 'Stock' : m === 'accounting' ? 'Compta' : m === 'reports' ? 'Rapports' : m === 'personnel' ? 'Equipe' : 'Config'}
-                                    </span>
-                                    <div className="flex gap-1 items-center">
-                                      <div className={`w-5 h-5 rounded-full flex items-center justify-center ${permissions.read ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-gray-100 text-gray-300'}`} title="Lecture">
-                                        <Eye size={12} />
-                                      </div>
-                                      <div className="flex gap-0.5">
-                                        <div className={`w-2.5 h-2.5 rounded-full border border-white ${permissions.create ? 'bg-blue-500 shadow-sm' : 'bg-gray-200'}`} title="Création" />
-                                        <div className={`w-2.5 h-2.5 rounded-full border border-white ${permissions.update ? 'bg-yellow-500 shadow-sm' : 'bg-gray-200'}`} title="Modification" />
-                                        <div className={`w-2.5 h-2.5 rounded-full border border-white ${permissions.delete ? 'bg-red-500 shadow-sm' : 'bg-gray-200'}`} title="Suppression" />
-                                      </div>
+                  {usersSubTab === 'list' ? (
+                    <div className="space-y-4">
+                       {users.map(u => (
+                         <div key={u.uid} className="flex flex-col bg-white rounded-[32px] border border-gray-100 hover:shadow-xl transition-all group overflow-hidden">
+                            <div className="flex flex-col lg:flex-row items-center justify-between p-6 gap-6">
+                               <div className="flex items-center gap-4 w-full lg:w-auto">
+                                  <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-400 font-black text-lg overflow-hidden border border-gray-100">
+                                     {u.photoURL ? (
+                                       <img src={u.photoURL} alt="Avatar" className="w-full h-full object-cover" />
+                                     ) : (
+                                       u.displayName ? u.displayName[0] : <User size={20} />
+                                     )}
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-black text-gray-900">{u.displayName || 'Utilisateur Anonyme'}</p>
+                                      {u.isActive === false && (
+                                        <span className="bg-red-50 text-red-500 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest border border-red-100">Désactivé</span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-gray-400 font-medium">{u.email}</p>
+                                    <div className="mt-1 flex items-center gap-1">
+                                       <span className={`px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-widest ${u.role === 'admin' ? 'bg-orange-500 text-white' : u.role === 'manager' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                                         {u.role}
+                                       </span>
                                     </div>
                                   </div>
-                                );
-                              })}
-                           </div>
-                           
-                           <div className="flex items-center gap-4 w-full lg:w-auto justify-end">
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => checkMasterPassword('TOGGLE_STATUS', { uid: u.uid, isActive: u.isActive !== false })}
-                                  disabled={u.uid === auth.currentUser?.uid}
-                                  className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${u.isActive !== false ? 'bg-green-50 text-green-600 border border-green-100 hover:bg-green-500 hover:text-white' : 'bg-red-50 text-red-600 border border-red-100 hover:bg-red-500 hover:text-white'} disabled:opacity-30`}
+                               </div>
+
+                               {/* DETAILED ACCESS MATRIX */}
+                               <div 
+                                 onClick={() => setEditingUser(u)}
+                                 className="flex flex-wrap gap-1.5 justify-center lg:justify-end flex-1 cursor-pointer hover:bg-gray-50 p-2 rounded-2xl transition-colors group/matrix"
+                                 title="Cliquer pour modifier les permissions"
                                 >
-                                  {u.isActive !== false ? 'Actif' : 'Bloqué'}
-                                </button>
-                                <div className="flex items-center bg-gray-50 p-1 rounded-2xl border border-gray-100">
-                                 {(['admin', 'cashier', 'manager'] as UserRole[]).map(r => (
-                                   <button
-                                     key={r}
-                                     disabled={userRole !== 'admin' || (u.uid === auth.currentUser?.uid)}
-                                     onClick={() => checkMasterPassword('UPDATE_ROLE', { uid: u.uid, role: r })}
-                                     className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${u.role === r ? 'bg-white text-orange-500 shadow-sm border border-gray-100' : 'text-gray-400 hover:text-gray-600'}`}
-                                   >
-                                     {r === 'admin' ? 'Admin' : r === 'manager' ? 'Chef' : 'Caiss'}
-                                   </button>
-                                 ))}
-                                </div>
-                              </div>
-                              
-                              <div className="flex items-center gap-2">
-                                 <button 
-                                   onClick={() => checkMasterPassword('RESET_USER_PASS', { email: u.email })}
-                                   className="p-3 rounded-2xl bg-orange-50 text-orange-500 hover:bg-orange-500 hover:text-white transition-all shadow-sm group"
-                                   title="Réinitialiser le mot de passe par Email"
-                                 >
-                                   <Mail size={20} className="group-hover:rotate-12 transition-transform" />
-                                 </button>
-                                 <button 
-                                   onClick={() => setEditingUser(editingUser?.uid === u.uid ? null : u)}
-                                   className={`p-3 rounded-2xl transition-all ${editingUser?.uid === u.uid ? 'bg-orange-500 text-white shadow-xl shadow-orange-500/20' : 'bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-900'}`}
-                                   title="Gérer les permissions"
-                                 >
-                                   <Shield size={20} />
-                                 </button>
-                                 {(userRole === 'admin' || userRole === 'manager') && u.uid !== auth.currentUser?.uid && (
-                                   <button 
-                                     onClick={() => checkMasterPassword('DELETE_USER', u.uid)}
-                                     className="p-3 rounded-2xl bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-all"
-                                     title="Supprimer l'utilisateur"
-                                   >
-                                     <Trash2 size={20} />
-                                   </button>
-                                 )}
-                              </div>
-                           </div>
-                        </div>
-
-                        {/* Permissions Modal MODERNIZED */}
-                        <AnimatePresence>
-                          {editingUser && (
-                            <div className="fixed inset-0 z-[60] flex items-center justify-center p-0 sm:p-4">
-                              <motion.div 
-                                initial={{ opacity: 0 }} 
-                                animate={{ opacity: 1 }} 
-                                exit={{ opacity: 0 }}
-                                className="absolute inset-0 bg-black/80 backdrop-blur-md" 
-                                onClick={() => setEditingUser(null)} 
-                              />
-                              <motion.div 
-                                initial={{ opacity: 0, y: 100, scale: 0.95 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: 100, scale: 0.95 }}
-                                className="relative bg-white w-full h-full sm:h-auto sm:max-w-2xl sm:rounded-[32px] shadow-2xl overflow-hidden flex flex-col"
-                              >
-                                <div className="p-6 sm:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-                                  <div>
-                                    <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase decoration-orange-500 decoration-4 underline-offset-4 tracking-tighter">Permissions</h2>
-                                    <p className="text-gray-500 font-bold italic text-[11px] mt-1.5 uppercase tracking-tighter">Accès de <span className="text-orange-600 font-black">{editingUser.displayName || editingUser.email}</span></p>
-                                  </div>
-                                  <button onClick={() => setEditingUser(null)} className="p-2 hover:bg-white hover:shadow-lg rounded-full transition-all group">
-                                    <X size={20} className="text-gray-300 group-hover:text-gray-900" />
-                                  </button>
-                                </div>
-
-                                <div className="flex-1 overflow-y-auto p-6 sm:p-8 max-h-[65vh] scrollbar-thin scrollbar-thumb-gray-200">
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                     {(['pos', 'inventory', 'accounting', 'settings', 'reports', 'personnel', 'clients', 'sales'] as (keyof UserPermissions)[]).map(module => (
-                                       <div key={module} className="bg-gray-50 p-6 rounded-[28px] border border-gray-100 hover:border-orange-500/20 transition-colors">
-                                          <div className="flex items-center justify-between mb-4">
-                                             <div className="flex items-center gap-2.5">
-                                                <div className="w-8 h-8 bg-white rounded-xl flex items-center justify-center text-gray-400 group-hover:text-orange-500 transition-colors shadow-sm">
-                                                   <Shield size={16} />
-                                                </div>
-                                                <span className="text-[11px] font-black uppercase tracking-widest text-gray-900">{module}</span>
-                                             </div>
+                                  {(['pos', 'inventory', 'accounting', 'sales', 'clients', 'reports', 'personnel', 'settings'] as (keyof UserPermissions)[]).map(m => {
+                                    const permissions = u.permissions?.[m] || getUserDefaultPermissions(u.email || '')[m];
+                                    const hasAccess = permissions.read || permissions.create || permissions.update || permissions.delete;
+                                    return (
+                                      <div key={m} className={`p-2 rounded-xl border flex flex-col items-center gap-1 transition-all ${hasAccess ? 'bg-white border-orange-100 shadow-sm' : 'bg-gray-50/50 border-transparent opacity-25'}`}>
+                                        <span className="text-[7px] font-black uppercase tracking-tighter text-gray-400">
+                                          {m === 'pos' ? 'Vente' : m === 'inventory' ? 'Stock' : m === 'accounting' ? 'Compta' : m === 'sales' ? 'Histo' : m === 'clients' ? 'Clients' : m === 'reports' ? 'Rapports' : m === 'personnel' ? 'Equipe' : 'Config'}
+                                        </span>
+                                        <div className="flex gap-1 items-center">
+                                          <div className={`w-5 h-5 rounded-full flex items-center justify-center ${permissions.read ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-gray-100 text-gray-300'}`} title="Lecture">
+                                            <Eye size={12} />
                                           </div>
-                                          <div className="grid grid-cols-2 gap-2.5">
-                                             {[
-                                               { key: 'read', icon: Eye, label: 'Lecture' },
-                                               { key: 'create', icon: Plus, label: 'Ajout' },
-                                               { key: 'update', icon: Edit3, label: 'Modif.' },
-                                               { key: 'delete', icon: Trash2, label: 'Suppr.' }
-                                             ].map(action => {
-                                               const isActive = editingUser.permissions?.[module]?.[action.key as keyof ModulePermissions];
-                                               return (
-                                                 <button
-                                                   key={action.key}
-                                                   onClick={() => {
-                                                     const newPermissions = {
-                                                       ...(editingUser.permissions || defaultPermissions()),
-                                                       [module]: {
-                                                         ...(editingUser.permissions?.[module] || defaultPermissions()[module]),
-                                                         [action.key]: !isActive
-                                                       }
-                                                     };
-                                                     setEditingUser({ ...editingUser, permissions: newPermissions });
-                                                   }}
-                                                   className={`p-3 rounded-xl transition-all flex items-center gap-2 border ${isActive ? 'bg-orange-500 border-orange-500 text-white shadow-xl shadow-orange-500/10' : 'bg-white border-gray-100 text-gray-400 hover:bg-gray-50'}`}
-                                                 >
-                                                   <action.icon size={18} />
-                                                   <span className="text-[10px] font-black uppercase tracking-widest">{action.label}</span>
-                                                 </button>
-                                               );
-                                             })}
+                                          <div className="flex gap-0.5">
+                                            <div className={`w-2.5 h-2.5 rounded-full border border-white ${permissions.create ? 'bg-blue-500 shadow-sm' : 'bg-gray-200'}`} title="Création" />
+                                            <div className={`w-2.5 h-2.5 rounded-full border border-white ${permissions.update ? 'bg-yellow-500 shadow-sm' : 'bg-gray-200'}`} title="Modification" />
+                                            <div className={`w-2.5 h-2.5 rounded-full border border-white ${permissions.delete ? 'bg-red-500 shadow-sm' : 'bg-gray-200'}`} title="Suppression" />
                                           </div>
-                                       </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                               </div>
+                               
+                               <div className="flex items-center gap-4 w-full lg:w-auto justify-end">
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => checkMasterPassword('TOGGLE_STATUS', { uid: u.uid, isActive: u.isActive !== false })}
+                                      disabled={u.uid === auth.currentUser?.uid}
+                                      className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${u.isActive !== false ? 'bg-green-50 text-green-600 border border-green-100 hover:bg-green-500 hover:text-white' : 'bg-red-50 text-red-600 border border-red-100 hover:bg-red-500 hover:text-white'} disabled:opacity-30`}
+                                    >
+                                      {u.isActive !== false ? 'Actif' : 'Bloqué'}
+                                    </button>
+                                    <div className="flex items-center bg-gray-50 p-1 rounded-2xl border border-gray-100">
+                                     {(['admin', 'cashier', 'manager'] as UserRole[]).map(r => (
+                                       <button
+                                         key={r}
+                                         disabled={userRole !== 'admin' || (u.uid === auth.currentUser?.uid)}
+                                         onClick={() => checkMasterPassword('UPDATE_ROLE', { uid: u.uid, role: r })}
+                                         className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${u.role === r ? 'bg-white text-orange-500 shadow-sm border border-gray-100' : 'text-gray-400 hover:text-gray-600'}`}
+                                       >
+                                         {r === 'admin' ? 'Admin' : r === 'manager' ? 'Chef' : 'Caiss'}
+                                       </button>
                                      ))}
+                                    </div>
                                   </div>
-                                </div>
-
-                                <div className="p-6 sm:p-8 bg-gray-50/50 border-t border-gray-100 flex flex-col sm:flex-row gap-3">
-                                  <button 
-                                    onClick={() => setEditingUser(null)}
-                                    className="flex-1 py-4 bg-white text-gray-900 rounded-2xl font-black uppercase tracking-widest text-[10px] border border-gray-200 hover:bg-gray-50 transition-all active:scale-95"
-                                  >
-                                    Fermer
-                                  </button>
-                                  <button 
-                                    onClick={() => checkMasterPassword('UPDATE_PERMISSIONS', { uid: editingUser.uid, permissions: editingUser.permissions || defaultPermissions() })}
-                                    className="flex-[2] py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-black hover:shadow-2xl hover:shadow-gray-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
-                                  >
-                                    <Check size={16} />
-                                    Enregistrer
-                                  </button>
-                                </div>
-                              </motion.div>
+                                  
+                                  <div className="flex items-center gap-2">
+                                     <button 
+                                       onClick={() => checkMasterPassword('RESET_USER_PASS', { email: u.email })}
+                                       className="p-3 rounded-2xl bg-orange-50 text-orange-500 hover:bg-orange-500 hover:text-white transition-all shadow-sm group"
+                                       title="Réinitialiser le mot de passe par Email"
+                                     >
+                                       <Mail size={20} className="group-hover:rotate-12 transition-transform" />
+                                     </button>
+                                     <button 
+                                       onClick={() => setEditingUser(editingUser?.uid === u.uid ? null : u)}
+                                       className={`p-3 rounded-2xl transition-all ${editingUser?.uid === u.uid ? 'bg-orange-500 text-white shadow-xl shadow-orange-500/20' : 'bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-900'}`}
+                                       title="Gérer les permissions"
+                                     >
+                                       <Shield size={20} />
+                                     </button>
+                                     {(userRole === 'admin' || userRole === 'manager') && u.uid !== auth.currentUser?.uid && (
+                                       <button 
+                                         onClick={() => checkMasterPassword('DELETE_USER', u.uid)}
+                                         className="p-3 rounded-2xl bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                                         title="Supprimer l'utilisateur"
+                                       >
+                                         <Trash2 size={20} />
+                                       </button>
+                                     )}
+                                  </div>
+                               </div>
                             </div>
-                          )}
-                        </AnimatePresence>
+
+                            {/* Permissions Modal MODERNIZED */}
+                            <AnimatePresence>
+                              {editingUser && (
+                                <div className="fixed inset-0 z-[60] flex items-center justify-center p-0 sm:p-4">
+                                  <motion.div 
+                                    initial={{ opacity: 0 }} 
+                                    animate={{ opacity: 1 }} 
+                                    exit={{ opacity: 0 }}
+                                    className="absolute inset-0 bg-black/80 backdrop-blur-md" 
+                                    onClick={() => setEditingUser(null)} 
+                                  />
+                                  <motion.div 
+                                    initial={{ opacity: 0, y: 100, scale: 0.95 }}
+                                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                                    exit={{ opacity: 0, y: 100, scale: 0.95 }}
+                                    className="relative bg-white w-full h-full sm:h-auto sm:max-w-2xl sm:rounded-[32px] shadow-2xl overflow-hidden flex flex-col"
+                                  >
+                                    <div className="p-6 sm:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                                      <div>
+                                        <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase decoration-orange-500 decoration-4 underline-offset-4 tracking-tighter">Permissions</h2>
+                                        <p className="text-gray-500 font-bold italic text-[11px] mt-1.5 uppercase tracking-tighter">Accès de <span className="text-orange-600 font-black">{editingUser.displayName || editingUser.email}</span></p>
+                                      </div>
+                                      <button onClick={() => setEditingUser(null)} className="p-2 hover:bg-white hover:shadow-lg rounded-full transition-all group">
+                                        <X size={20} className="text-gray-300 group-hover:text-gray-900" />
+                                      </button>
+                                    </div>
+
+                                    <div className="flex-1 overflow-y-auto p-6 sm:p-8 max-h-[65vh] scrollbar-thin scrollbar-thumb-gray-200">
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                         {(['pos', 'inventory', 'accounting', 'settings', 'reports', 'personnel', 'clients', 'sales'] as (keyof UserPermissions)[]).map(module => (
+                                           <div key={module} className="bg-gray-50 p-6 rounded-[28px] border border-gray-100 hover:border-orange-500/20 transition-colors">
+                                              <div className="flex items-center justify-between mb-4">
+                                                 <div className="flex items-center gap-2.5">
+                                                    <div className="w-8 h-8 bg-white rounded-xl flex items-center justify-center text-gray-400 group-hover:text-orange-500 transition-colors shadow-sm">
+                                                       <Shield size={16} />
+                                                    </div>
+                                                    <span className="text-[11px] font-black uppercase tracking-widest text-gray-900">
+                                                      {module === 'pos' ? 'Caisse / Vente' :
+                                                       module === 'inventory' ? 'Inventaire' :
+                                                       module === 'accounting' ? 'Dépenses' :
+                                                       module === 'sales' ? 'Historique' :
+                                                       module === 'clients' ? 'Clients' :
+                                                       module === 'personnel' ? 'Équipe' :
+                                                       module === 'reports' ? 'Rapports' :
+                                                       module === 'settings' ? 'Configuration' : module}
+                                                    </span>
+                                                 </div>
+                                              </div>
+                                              <div className="grid grid-cols-2 gap-2.5">
+                                                 {[
+                                                   { key: 'read', icon: Eye, label: 'Lecture' },
+                                                   { key: 'create', icon: Plus, label: 'Ajout' },
+                                                   { key: 'update', icon: Edit3, label: 'Modif.' },
+                                                   { key: 'delete', icon: Trash2, label: 'Suppr.' }
+                                                 ].map(action => {
+                                                   const isActive = (editingUser.permissions?.[module] || getUserDefaultPermissions(editingUser.email || '')[module])?.[action.key as keyof ModulePermissions];
+                                                   return (
+                                                     <button
+                                                       key={action.key}
+                                                       onClick={() => {
+                                                         const newPermissions = {
+                                                           ...(editingUser.permissions || getUserDefaultPermissions(editingUser.email || '')),
+                                                           [module]: {
+                                                             ...(editingUser.permissions?.[module] || getUserDefaultPermissions(editingUser.email || '')[module]),
+                                                             [action.key]: !isActive
+                                                           }
+                                                         };
+                                                         setEditingUser({ ...editingUser, permissions: newPermissions });
+                                                       }}
+                                                       className={`p-3 rounded-xl transition-all flex items-center gap-2 border ${isActive ? 'bg-orange-500 border-orange-500 text-white shadow-xl shadow-orange-500/10' : 'bg-white border-gray-100 text-gray-400 hover:bg-gray-50'}`}
+                                                     >
+                                                       <action.icon size={18} />
+                                                       <span className="text-[10px] font-black uppercase tracking-widest">{action.label}</span>
+                                                     </button>
+                                                   );
+                                                 })}
+                                              </div>
+                                           </div>
+                                         ))}
+                                      </div>
+                                    </div>
+
+                                    <div className="p-6 sm:p-8 bg-gray-50/50 border-t border-gray-100 flex flex-col sm:flex-row gap-3">
+                                      <button 
+                                        onClick={() => setEditingUser(null)}
+                                        className="flex-1 py-4 bg-white text-gray-900 rounded-2xl font-black uppercase tracking-widest text-[10px] border border-gray-200 hover:bg-gray-50 transition-all active:scale-95"
+                                      >
+                                        Fermer
+                                      </button>
+                                      <button 
+                                        onClick={() => checkMasterPassword('UPDATE_PERMISSIONS', { uid: editingUser.uid, permissions: editingUser.permissions || getUserDefaultPermissions(editingUser.email || '') })}
+                                        className="flex-[2] py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-black hover:shadow-2xl hover:shadow-gray-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                                      >
+                                        <Check size={16} />
+                                        Enregistrer
+                                      </button>
+                                    </div>
+                                  </motion.div>
+                                </div>
+                              )}
+                            </AnimatePresence>
+                         </div>
+                       ))}
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-[40px] border border-gray-150/80 shadow-2xl overflow-hidden">
+                      {Object.keys(matrixDrafts).length > 0 && (
+                        <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-4 px-8 text-white flex flex-col sm:flex-row justify-between items-center gap-4 border-b border-orange-200/20 shadow-md font-sans">
+                          <div className="flex items-center gap-3">
+                            <span className="relative flex h-3.5 w-3.5 shrink-0">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-white"></span>
+                            </span>
+                            <p className="text-xs font-black uppercase tracking-wider">
+                              Modifications non enregistrées ({Object.keys(matrixDrafts).length} comptes modifiés)
+                            </p>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            <button
+                              onClick={() => {
+                                setMatrixDrafts({});
+                                alert("Modifications réinitialisées !");
+                              }}
+                              className="px-4 py-2 border border-white/40 hover:bg-white/10 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
+                            >
+                              Annuler
+                            </button>
+                            <button
+                              onClick={handleSaveMatrixDrafts}
+                              className="px-6 py-2 bg-white text-orange-650 hover:scale-105 active:scale-95 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all shadow-xl"
+                            >
+                              Enregistrer les modifications
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="p-8 border-b border-gray-150 bg-gray-55/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div>
+                          <h4 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase decoration-orange-500 decoration-4 underline-offset-4 tracking-tighter">Matrice Globale de Sécurité</h4>
+                          <p className="text-xs text-gray-500 mt-1.5 font-sans font-medium">
+                            Basculez à la volée les droits d'action de vos salariés : <span className="text-green-600 font-bold">Lecture (L)</span>, <span className="text-blue-600 font-bold">Création (C)</span>, <span className="text-amber-600 font-bold">Modification (M)</span>, <span className="text-red-600 font-bold">Suppression (S)</span>.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-1.55">
+                          <span className="px-3 py-1.5 bg-green-50 text-[9px] font-black text-green-700 border border-green-100 rounded-lg">L: Lecture</span>
+                          <span className="px-3 py-1.5 bg-blue-50 text-[9px] font-black text-blue-700 border border-blue-100 rounded-lg">C: Créer</span>
+                          <span className="px-3 py-1.5 bg-amber-50 text-[9px] font-black text-amber-700 border border-amber-100 rounded-lg">M: Modif.</span>
+                          <span className="px-3 py-1.5 bg-red-50 text-[9px] font-black text-red-700 border border-red-100 rounded-lg">S: Suppr.</span>
+                        </div>
                       </div>
-                    ))}
-                 </div>
+
+                      <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-200">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="bg-gray-900 text-white select-none">
+                              <th className="p-5 font-black text-xs uppercase tracking-widest min-w-[250px]">Collaborateur</th>
+                              {matrixModules.map(m => (
+                                <th key={m.key} className="p-5 font-black text-xs uppercase tracking-widest text-center min-w-[190px]" title={m.desc}>
+                                  <div className="flex flex-col items-center gap-1.5">
+                                    <div className="p-2.5 bg-white/10 rounded-2xl text-orange-500">
+                                      <m.icon size={16} />
+                                    </div>
+                                    <span className="text-[10px] tracking-wider">{m.label}</span>
+                                  </div>
+                                </th>
+                              ))}
+                              <th className="p-5 font-black text-xs uppercase tracking-widest text-center min-w-[240px]">Rôles & Options</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-150">
+                            {users.map(u => {
+                              const isSelf = u.uid === auth.currentUser?.uid;
+                              return (
+                                <tr key={u.uid} className="hover:bg-gray-50/40 transition-colors">
+                                  <td className="p-5">
+                                    <div className="flex items-center gap-4">
+                                      <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-400 font-black text-lg overflow-hidden border border-gray-100">
+                                        {u.photoURL ? (
+                                          <img src={u.photoURL} alt="Avatar" className="w-full h-full object-cover" />
+                                        ) : (
+                                          u.displayName ? u.displayName[0] : <User size={20} />
+                                        )}
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="font-black text-gray-900 text-sm">{u.displayName || 'Utilisateur'}</span>
+                                          {u.isActive === false && (
+                                            <span className="bg-red-50 text-red-500 text-[6px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest border border-red-100">Bloqué</span>
+                                          )}
+                                        </div>
+                                        <span className="text-xs text-gray-400 font-medium">{u.email}</span>
+                                        <span className="mt-1 self-start px-2 py-0.5 bg-gray-100 text-[8px] font-black text-gray-500 border border-gray-200 rounded uppercase tracking-widest">{u.role}</span>
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  {matrixModules.map(m => {
+                                    const userPerm = matrixDrafts[u.uid] || u.permissions || getUserDefaultPermissions(u.email || '');
+                                    const permissions = userPerm[m.key] || { read: false, create: false, update: false, delete: false };
+                                    return (
+                                      <td key={m.key} className="p-5 text-center">
+                                        <div className="flex justify-center items-center gap-1">
+                                          {[
+                                            { key: 'read', label: 'L', activeColor: 'bg-green-500 text-white shadow-green-500/20 border-green-500', name: 'Lecture' },
+                                            { key: 'create', label: 'C', activeColor: 'bg-blue-500 text-white shadow-blue-500/20 border-blue-500', name: 'Création' },
+                                            { key: 'update', label: 'M', activeColor: 'bg-amber-500 text-white shadow-amber-500/20 border-amber-500', name: 'Modification' },
+                                            { key: 'delete', label: 'S', activeColor: 'bg-red-500 text-white shadow-red-500/20 border-red-500', name: 'Suppression' }
+                                          ].map(act => {
+                                            const isActive = permissions[act.key as keyof ModulePermissions];
+                                            return (
+                                              <button
+                                                key={act.key}
+                                                disabled={isSelf && m.key === 'settings' && act.key === 'read'} // Prevent lockouts
+                                                onClick={() => handleToggleMatrixPermission(u.uid, m.key, act.key as keyof ModulePermissions, isActive)}
+                                                title={`${act.name} : ${u.displayName || 'Utilisateur'} -> module ${m.label}`}
+                                                className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-[9px] border transition-all hover:scale-110 active:scale-90 ${isActive ? `${act.activeColor} shadow-md` : 'bg-gray-50 text-gray-300 border-gray-150/70 hover:bg-gray-100 hover:text-gray-400'}`}
+                                              >
+                                                {act.label}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </td>
+                                    );
+                                  })}
+
+                                  <td className="p-5">
+                                    <div className="flex flex-col gap-2.5 items-center justify-center">
+                                      <div className="flex items-center bg-gray-50 border border-gray-100 p-1 rounded-xl">
+                                        {(['admin', 'cashier', 'manager'] as UserRole[]).map(r => (
+                                          <button
+                                            key={r}
+                                            disabled={isSelf || userRole !== 'admin'}
+                                            onClick={() => handleUpdateUserRole(u.uid, r)}
+                                            className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${u.role === r ? 'bg-white text-orange-500 shadow-sm border border-gray-100' : 'text-gray-400 hover:text-gray-650'}`}
+                                          >
+                                            {r === 'admin' ? 'Admin' : r === 'manager' ? 'Chef' : 'Caiss'}
+                                          </button>
+                                        ))}
+                                      </div>
+
+                                      <div className="flex gap-1.5">
+                                        <button
+                                          onClick={() => handleApplyRolePresets(u.uid, u.role)}
+                                          className="px-2.5 py-1 text-[8px] font-black tracking-widest uppercase bg-orange-50 border border-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-colors"
+                                          title={`Rétablir les permissions d'origine pour le rôle ${u.role}`}
+                                        >
+                                          Reset Rôle
+                                        </button>
+                                        <button
+                                          onClick={() => handleToggleUserStatus(u.uid, u.isActive !== false)}
+                                          disabled={isSelf}
+                                          className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all border ${u.isActive !== false ? 'bg-green-50 text-green-600 border-green-100 hover:bg-green-500 hover:text-white' : 'bg-red-50 text-red-600 border-red-100 hover:bg-red-500 hover:text-white'} disabled:opacity-30`}
+                                        >
+                                          {u.isActive !== false ? 'Actif' : 'Bloqué'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="p-6 bg-gray-50 border-t border-gray-150 flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <div className="text-left">
+                          {Object.keys(matrixDrafts).length > 0 ? (
+                            <span className="text-[11px] font-bold text-orange-650 animate-pulse font-sans">
+                              ⚠️ Vous avez des modifications non enregistrées ({Object.keys(matrixDrafts).length} comptes)
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-bold text-gray-400 font-sans">
+                              Aucun changement en attente dans la matrice.
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          onClick={handleSaveMatrixDrafts}
+                          disabled={Object.keys(matrixDrafts).length === 0 || isActionLoading}
+                          className={`px-8 py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-2 ${Object.keys(matrixDrafts).length > 0 ? 'bg-gray-900 text-white hover:bg-orange-600 hover:shadow-xl hover:shadow-orange-600/20 cursor-pointer' : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'}`}
+                        >
+                          <Check size={16} />
+                          Enregistrer les modifications
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
 
                  <AnimatePresence>
                    {isAddUserOpen && (
@@ -1471,7 +1868,8 @@ export default function Settings() {
                   </div>
                 )}
               </div>
-            )}
+            );
+          })()}
             
             {activeTab === 'backup' && (
               <div className="space-y-12">
@@ -1683,9 +2081,18 @@ export default function Settings() {
                <form onSubmit={handleVerifyPassword} className="space-y-4">
                   <input 
                     type="password" autoFocus required placeholder="••••" 
-                    value={settingsPasswordInput} onChange={e => setSettingsPasswordInput(e.target.value)}
+                    value={settingsPasswordInput} onChange={e => { setSettingsPasswordInput(e.target.value); setVerifyPasswordError(null); }}
                     className="w-full px-8 py-5 bg-gray-50 rounded-3xl font-black text-gray-900 border-none focus:ring-4 focus:ring-orange-500/5 outline-none text-center text-2xl tracking-[1em]"
                   />
+                  {verifyPasswordError && (
+                    <motion.p 
+                      initial={{ opacity: 0, y: -10 }} 
+                      animate={{ opacity: 1, y: 0 }} 
+                      className="text-xs text-red-500 font-extrabold font-sans"
+                    >
+                      {verifyPasswordError}
+                    </motion.p>
+                  )}
                   <div className="flex gap-2">
                     <button type="button" onClick={() => { setIsVerifyPasswordOpen(false); setPendingAction(null); setSettingsPasswordInput(''); }} className="flex-1 py-4 bg-gray-100 text-gray-400 rounded-2xl font-black text-[10px] uppercase tracking-widest">ANNULER</button>
                     <button type="submit" className="flex-[2] py-4 bg-orange-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-orange-500/20">VALIDER</button>

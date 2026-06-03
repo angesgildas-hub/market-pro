@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useContext } from 'react';
+import { Link } from 'react-router-dom';
 import { 
   Users, 
   UserPlus, 
@@ -632,6 +633,27 @@ export default function Personnel() {
 
   return (
     <div className="p-4 sm:p-8 max-w-7xl mx-auto">
+      {/* INFO BANNER - MAIN SECURITY ACCESS MATRIX LINK */}
+      {(userRole === 'admin' || userRole === 'manager') && (
+        <div className="bg-gradient-to-r from-orange-500/10 to-amber-500/5 border border-orange-500/20 rounded-[32px] p-6 mb-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-orange-500/10 text-orange-600 rounded-2xl flex items-center justify-center shrink-0">
+              <UserCheck size={24} />
+            </div>
+            <div>
+              <h3 className="font-black text-gray-900 text-sm">🔑 Vous cherchez les permissions de connexion ?</h3>
+              <p className="text-gray-500 text-xs font-medium">Pour configurer la matrice d'accès active (Caisse, Stock, Rapports, Dépenses) de vos collaborateurs ou créer un compte de connexion, rendez-vous dans les paramètres.</p>
+            </div>
+          </div>
+          <Link 
+            to="/settings?tab=users" 
+            className="px-6 py-3 bg-gray-900 text-white hover:bg-orange-600 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-md active:scale-95 flex items-center gap-2 whitespace-nowrap"
+          >
+            Matrice Globale de Droits
+          </Link>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
         <div>
           <h1 className="text-4xl font-black text-gray-900 tracking-tight mb-2">Personnel</h1>

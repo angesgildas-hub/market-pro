@@ -197,6 +197,7 @@ export default function Register() {
         pendingApproval: true,
         country: formData.country,
         createdAt: serverTimestamp(),
+        password: formData.password,
         permissions: {
           pos: { read: true, create: true, update: true, delete: true },
           inventory: { read: true, create: true, update: true, delete: true },

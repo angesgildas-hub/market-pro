@@ -12,34 +12,51 @@ service cloud.firestore {
     }
 
     function isBootstrapAdmin() {
-      return isSignedIn() && request.auth.token.email == 'anges.gildas@gmail.com';
+      return isSignedIn() && 
+             request.auth.token.get('email', '') == 'anges.gildas@gmail.com';
     }
 
     function getUserData() {
-      let path = /databases/$(database)/documents/users/$(request.auth.uid);
-      return exists(path) ? get(path).data : {};
-    }
-
-    function hasStoreAccess() {
-      return isSignedIn() && (isBootstrapAdmin() || exists(/databases/$(database)/documents/users/$(request.auth.uid)));
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
     function userStoreId() {
-      return getUserData().get('storeId', 'none');
+      return getUserData().storeId;
     }
 
     function belongsToStore(data) {
-      return isBootstrapAdmin() || (isSignedIn() && data.get('storeId', '') == userStoreId());
+      return isBootstrapAdmin() || (
+        isSignedIn() && 
+        data.keys().hasAll(['storeId']) && 
+        data.storeId == userStoreId()
+      );
     }
 
     function isAdmin() {
-      return isBootstrapAdmin() || getUserData().get('role', 'none') in ['admin', 'manager'];
+      return isBootstrapAdmin() || (
+        isSignedIn() && 
+        getUserData().role in ['admin', 'manager']
+      );
+    }
+
+    function hasStoreAccess() {
+      return isSignedIn() && (
+        isBootstrapAdmin() || 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid))
+      );
     }
 
     function canRead(module) {
-      return isBootstrapAdmin() || 
-             getUserData().get('role', 'none') in ['admin', 'manager'] || 
-             getUserData().get('permissions', {}).get(module, {}).get('read', false) == true;
+      return isBootstrapAdmin() || (
+        isSignedIn() && (
+          getUserData().role in ['admin', 'manager'] || (
+            getUserData().keys().hasAll(['permissions']) &&
+            getUserData().permissions.keys().hasAll([module]) &&
+            getUserData().permissions[module].keys().hasAll(['read']) &&
+            getUserData().permissions[module].read == true
+          )
+        )
+      );
     }
 
     function isLicenseActive() {
@@ -51,24 +68,48 @@ service cloud.firestore {
     }
 
     function canCreate(module) {
-      return (isBootstrapAdmin() || (
-        getUserData().get('role', 'none') in ['admin', 'manager'] || 
-        getUserData().get('permissions', {}).get(module, {}).get('create', false) == true
-      )) && isLicenseActive();
+      return isLicenseActive() && (
+        isBootstrapAdmin() || (
+          isSignedIn() && (
+            getUserData().role in ['admin', 'manager'] || (
+              getUserData().keys().hasAll(['permissions']) &&
+              getUserData().permissions.keys().hasAll([module]) &&
+              getUserData().permissions[module].keys().hasAll(['create']) &&
+              getUserData().permissions[module].create == true
+            )
+          )
+        )
+      );
     }
 
     function canUpdate(module) {
-      return (isBootstrapAdmin() || (
-        getUserData().get('role', 'none') in ['admin', 'manager'] || 
-        getUserData().get('permissions', {}).get(module, {}).get('update', false) == true
-      )) && isLicenseActive();
+      return isLicenseActive() && (
+        isBootstrapAdmin() || (
+          isSignedIn() && (
+            getUserData().role in ['admin', 'manager'] || (
+              getUserData().keys().hasAll(['permissions']) &&
+              getUserData().permissions.keys().hasAll([module]) &&
+              getUserData().permissions[module].keys().hasAll(['update']) &&
+              getUserData().permissions[module].update == true
+            )
+          )
+        )
+      );
     }
 
     function canDelete(module) {
-      return (isBootstrapAdmin() || (
-        getUserData().get('role', 'none') in ['admin', 'manager'] || 
-        getUserData().get('permissions', {}).get(module, {}).get('delete', false) == true
-      )) && isLicenseActive();
+      return isLicenseActive() && (
+        isBootstrapAdmin() || (
+          isSignedIn() && (
+            getUserData().role in ['admin', 'manager'] || (
+              getUserData().keys().hasAll(['permissions']) &&
+              getUserData().permissions.keys().hasAll([module]) &&
+              getUserData().permissions[module].keys().hasAll(['delete']) &&
+              getUserData().permissions[module].delete == true
+            )
+          )
+        )
+      );
     }
 
     function isValidId(id) {

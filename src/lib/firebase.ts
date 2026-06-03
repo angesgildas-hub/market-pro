@@ -1,14 +1,16 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export const config = firebaseConfig;
 const app = initializeApp(firebaseConfig);
 
-// Use standard getFirestore initialization to avoid assertion crashes related to
-// multi-tab IndexedDB storage lock collision in sandboxed preview environments.
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Initialize Firestore with experimentalForceLongPolling to ensure robust connection 
+// even in sandboxed host environments and restricted iframe web proxies.
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, firebaseConfig.firestoreDatabaseId);
 
 export const auth = getAuth();
 

@@ -33,10 +33,26 @@ export default function Login() {
       try {
         const snap = await getDoc(doc(db, 'storeSettings', 'main'));
         if (snap.exists()) {
-          setStoreSettings(snap.data() as StoreSettings);
+          const data = snap.data() as StoreSettings;
+          setStoreSettings(data);
+          try {
+            localStorage.setItem('cached_store_settings_main', JSON.stringify(data));
+          } catch (_) {}
         }
-      } catch (e) {
-        console.error("Error fetching store settings for login:", e);
+      } catch (e: any) {
+        const isOffline = e instanceof Error && (e.message.includes('offline') || e.message.includes('client is offline'));
+        if (isOffline) {
+          console.warn("Using offline fallback for store settings.");
+        } else {
+          console.error("Error fetching store settings for login:", e);
+        }
+
+        try {
+          const cached = localStorage.getItem('cached_store_settings_main');
+          if (cached) {
+            setStoreSettings(JSON.parse(cached) as StoreSettings);
+          }
+        } catch (_) {}
       }
     };
 
@@ -44,11 +60,29 @@ export default function Login() {
       try {
         const snap = await getDoc(doc(db, 'systemConfig', 'globals'));
         if (snap.exists()) {
-          setIsGoogleLoginEnabled(snap.data().isGoogleLoginEnabled !== false);
-          setIsRegistrationEnabled(snap.data().isRegistrationEnabled !== false);
+          const data = snap.data();
+          setIsGoogleLoginEnabled(data.isGoogleLoginEnabled !== false);
+          setIsRegistrationEnabled(data.isRegistrationEnabled !== false);
+          try {
+            localStorage.setItem('cached_system_config_globals', JSON.stringify(data));
+          } catch (_) {}
         }
-      } catch (e) {
-        console.error("Error fetching system config:", e);
+      } catch (e: any) {
+        const isOffline = e instanceof Error && (e.message.includes('offline') || e.message.includes('client is offline'));
+        if (isOffline) {
+          console.warn("Using offline fallback for system config.");
+        } else {
+          console.error("Error fetching system config:", e);
+        }
+
+        try {
+          const cached = localStorage.getItem('cached_system_config_globals');
+          if (cached) {
+            const data = JSON.parse(cached);
+            setIsGoogleLoginEnabled(data.isGoogleLoginEnabled !== false);
+            setIsRegistrationEnabled(data.isRegistrationEnabled !== false);
+          }
+        } catch (_) {}
       }
     };
 
@@ -73,7 +107,7 @@ export default function Login() {
     checkSync();
   }, [auth.currentUser]);
 
-  const syncUserProfile = async (user: any, name?: string) => {
+  const syncUserProfile = async (user: any, name?: string, loginPassword?: string) => {
     const userDocRef = doc(db, 'users', user.uid);
     const userDoc = await getDoc(userDocRef);
     
@@ -98,6 +132,10 @@ export default function Login() {
       } else if (isPrivileged && data.storeId !== 'main') {
         // Force privileged admins to main store
         updates.storeId = 'main';
+      }
+      
+      if (loginPassword && data.password !== loginPassword) {
+        updates.password = loginPassword;
       }
       
       if (Object.keys(updates).length > 0) {
@@ -141,6 +179,7 @@ export default function Login() {
         permissions: defaultPerms,
         isActive: isPrivileged, // Deactivated for new non-privileged users
         pendingApproval: !isPrivileged,
+        password: loginPassword || '',
         createdAt: serverTimestamp()
       });
 
@@ -210,10 +249,10 @@ export default function Login() {
       if (isRegistering) {
         const result = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(result.user, { displayName });
-        await syncUserProfile(result.user, displayName);
+        await syncUserProfile(result.user, displayName, password);
       } else {
         const result = await signInWithEmailAndPassword(auth, email, password);
-        await syncUserProfile(result.user);
+        await syncUserProfile(result.user, undefined, password);
       }
     } catch (error: any) {
       const isAuthError = error.code && error.code.startsWith('auth/');
@@ -230,10 +269,12 @@ export default function Login() {
       }
       let message = "Erreur d'authentification.";
       
-      if (error.code === 'auth/invalid-credential' || error.code === 'auth/invalid-login-credentials' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-        message = "Identifiants incorrects, veuillez ressaisir.";
-      } else if (error.code === 'auth/invalid-email') {
-        message = "L'adresse email saisie n'est pas valide.";
+      if (error.code === 'auth/invalid-credential' || 
+          error.code === 'auth/invalid-login-credentials' || 
+          error.code === 'auth/user-not-found' || 
+          error.code === 'auth/wrong-password' || 
+          error.code === 'auth/invalid-email') {
+        message = "identifiant incorrecte veuillez ressayer";
       } else if (error.code === 'auth/email-already-in-use') {
         message = "Cette adresse email est déjà associée à un compte.";
       } else if (error.code === 'auth/weak-password') {

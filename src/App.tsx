@@ -189,9 +189,14 @@ function Sidebar() {
   }
 
   const filteredItems = menuItems.filter(item => {
-    // Custom filter for the main system admin
-    if (auth.currentUser?.email === 'anges.gildas@gmail.com') {
-      return ['dashboard', 'accounting', 'super-admin', 'settings', 'mobile_money'].includes(item.id);
+    const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com';
+    if (isSuperAdmin) {
+      if (item.id === 'super-admin' || item.id === 'settings') return true;
+      let keyToCheck = item.module || item.id;
+      if (item.id === 'history') keyToCheck = 'sales';
+      if (item.id === 'mobile_money') keyToCheck = 'pos';
+      if (item.id === 'dashboard') keyToCheck = 'reports';
+      return hasPermission(keyToCheck, 'read');
     }
     
     // Admin always has access
@@ -292,7 +297,8 @@ function AppRoutes({
   isLicenseValid, 
   theme, 
   loading,
-  settings
+  settings,
+  hasPermission
 }: { 
   user: any; 
   userRole: UserRole; 
@@ -301,6 +307,7 @@ function AppRoutes({
   theme: Theme;
   loading: boolean;
   settings: StoreSettings | null;
+  hasPermission: (module: string, action: 'read' | 'create' | 'update' | 'delete') => boolean;
 }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -323,8 +330,10 @@ function AppRoutes({
   const hasAccess = (module: string) => {
     const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com';
     if (isSuperAdmin) {
-      // Allow specific modules for super admin
-      return ['reports', 'accounting', 'settings', 'super-admin', 'dashboard', 'mobile_money'].includes(module);
+      if (module === 'super-admin' || module === 'settings') return true;
+      let keyToCheck = module;
+      if (module === 'mobile_money') keyToCheck = 'pos';
+      return hasPermission(keyToCheck, 'read');
     }
     
     // Block critical modules if license is invalid
@@ -412,6 +421,51 @@ function AppRoutes({
   );
 }
 
+// Helper to automatically detect subdirectory hosting based on the URL path
+const getAutomaticBasename = (): string => {
+  const hostname = window.location.hostname;
+  if (
+    hostname === 'localhost' || 
+    hostname === '127.0.0.1' || 
+    hostname.includes('ais-dev-') || 
+    hostname.includes('ais-pre-') || 
+    hostname.includes('run.app') ||
+    hostname.includes('googleusercontent.com')
+  ) {
+    return '/';
+  }
+
+  const pathname = window.location.pathname;
+  if (!pathname || pathname === '/' || pathname === '/index.html') return '/';
+  
+  // List of all known React Router path suffixes in this app
+  const knownRoutes = [
+    'login', 
+    'register', 
+    'pos', 
+    'inventory', 
+    'sales', 
+    'accounting', 
+    'mobile-money', 
+    'personnel', 
+    'clients', 
+    'settings', 
+    'super-admin'
+  ];
+  
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length === 0) return '/';
+  
+  // If the last segment is a known route, remove it to find the subdirectory base
+  const lastSegment = segments[segments.length - 1];
+  if (knownRoutes.includes(lastSegment)) {
+    segments.pop();
+  }
+  
+  if (segments.length === 0) return '/';
+  return '/' + segments.join('/');
+};
+
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -425,6 +479,23 @@ export default function App() {
   const [preselectedClient, setPreselectedClient] = useState<Client | null>(null);
   const [verifyPasswordModal, setVerifyPasswordModal] = useState<{ open: boolean; onSuccess: (() => void) | null }>({ open: false, onSuccess: null });
   const [passwordInput, setPasswordInput] = useState('');
+
+  const hasPermission = (module: string, action: 'read' | 'create' | 'update' | 'delete'): boolean => {
+    const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com';
+    if (isSuperAdmin) {
+      if (module === 'settings' || module === 'super-admin' || module === 'none') return true;
+      if (!userProfile?.permissions) return true; // Default to true as they are the administrator
+      const perm = userProfile.permissions[module];
+      if (perm !== undefined) {
+        return perm[action] === true;
+      }
+      return true; // Default to true if not specified
+    }
+
+    if (userRole === 'admin') return true;
+    if (!userProfile?.permissions) return false;
+    return userProfile.permissions[module]?.[action] === true;
+  };
 
   // Automatic Daily Cloud Backup
   useEffect(() => {
@@ -542,13 +613,23 @@ export default function App() {
   useEffect(() => {
     // Domain Redirection Logic
     const fetchConfig = async () => {
-      // Security: Never redirect if we are inside an iframe (AI Studio preview)
-      if (window.self !== window.top) return;
+      // Security: Never redirect if we are inside an iframe or on preview/development environments
+      const isLocalhost = window.location.hostname === 'localhost' || 
+                          window.location.hostname === '127.0.0.1' ||
+                          window.location.hostname.includes('ais-dev-') ||
+                          window.location.hostname.includes('ais-pre-') ||
+                          window.location.hostname.includes('run.app');
+      
+      if (window.self !== window.top || isLocalhost) return;
 
       try {
         const snap = await getDoc(doc(db, 'systemConfig', 'globals'));
         if (snap.exists()) {
           const config = snap.data();
+          try {
+            localStorage.setItem('cached_system_config_globals', JSON.stringify(config));
+          } catch (_) {}
+
           if (config.isAutoRedirectEnabled && config.publicAccessUrl) {
             const targetUrl = config.publicAccessUrl;
             const isSuperAdminEmail = auth.currentUser?.email === 'anges.gildas@gmail.com';
@@ -578,8 +659,45 @@ export default function App() {
             }
           }
         }
-      } catch (e) {
-        console.error("Error checking redirection config:", e);
+      } catch (e: any) {
+        const isOffline = e instanceof Error && (e.message.includes('offline') || e.message.includes('client is offline'));
+        if (isOffline) {
+          console.warn("Using offline fallback for redirection config check.");
+        } else {
+          console.error("Error checking redirection config:", e);
+        }
+
+        try {
+          const cached = localStorage.getItem('cached_system_config_globals');
+          if (cached) {
+            const config = JSON.parse(cached);
+            if (config.isAutoRedirectEnabled && config.publicAccessUrl) {
+              const targetUrl = config.publicAccessUrl;
+              const isSuperAdminEmail = auth.currentUser?.email === 'anges.gildas@gmail.com';
+              const isSuperAdminPath = window.location.pathname.includes('/super-admin');
+              const isLoginPage = window.location.pathname.includes('/login') || window.location.pathname.includes('/auth');
+              const isLocalhost = window.location.hostname === 'localhost' || 
+                                  window.location.hostname === '127.0.0.1' ||
+                                  window.location.hostname.includes('ais-dev-') ||
+                                  window.location.hostname.includes('ais-pre-') ||
+                                  window.location.hostname.includes('run.app');
+              const hasNoRedirect = window.location.search.includes('no-redirect=1');
+              
+              try {
+                const target = new URL(targetUrl);
+                const current = new URL(window.location.href);
+                
+                const originsDiffer = current.origin !== target.origin;
+                const pathDiffers = !current.pathname.startsWith(target.pathname);
+                
+                if ((originsDiffer || pathDiffers) && !isSuperAdminPath && !isSuperAdminEmail && !isLocalhost && !isLoginPage && !hasNoRedirect) {
+                  console.log("Redirecting to custom domain (cached):", targetUrl);
+                  window.location.replace(targetUrl);
+                }
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
       }
     };
     fetchConfig();
@@ -686,11 +804,7 @@ export default function App() {
     }
   };
 
-  const hasPermission = (module: string, action: 'read' | 'create' | 'update' | 'delete'): boolean => {
-    if (userRole === 'admin') return true;
-    if (!userProfile?.permissions) return false;
-    return userProfile.permissions[module]?.[action] === true;
-  };
+
 
   return (
     <AppContext.Provider value={{ 
@@ -707,7 +821,7 @@ export default function App() {
       setPreselectedClient,
       verifyAction
     }}>
-      <Router>
+      <Router basename={getAutomaticBasename()}>
         <AppRoutes 
           user={user} 
           userRole={userRole} 
@@ -716,6 +830,7 @@ export default function App() {
           theme={theme}
           loading={loading}
           settings={settings}
+          hasPermission={hasPermission}
         />
       </Router>
 

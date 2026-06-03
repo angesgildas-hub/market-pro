@@ -10,7 +10,7 @@ import {
   Lock
 } from 'lucide-react';
 import { AppContext } from '../App';
-import { collection, query, getDocs, limit, orderBy, where } from 'firebase/firestore';
+import { collection, query, getDocs, limit, orderBy, where, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../services/db';
 import { 
@@ -79,13 +79,103 @@ export default function Dashboard() {
   const [chartData, setChartData] = useState<any[]>(data);
 
   useEffect(() => {
-    async function fetchSuperAdminData() {
-      // ... same as before
+    let unsubStores: (() => void) | undefined;
+    let unsubUsers: (() => void) | undefined;
+    let unsubSales: (() => void) | undefined;
+
+    function fetchSuperAdminData() {
+      unsubStores = onSnapshot(collection(db, 'storeSettings'), (storesSnap) => {
+        const storesList = storesSnap.docs.map(doc => doc.data());
+        const total = storesList.length;
+        const activeDef = storesList.filter(s => s.licenseStatus === 'active').length;
+        const suspendedDef = storesList.filter(s => s.licenseStatus === 'suspended').length;
+
+        setStats(prev => ({
+          ...prev,
+          totalStores: total,
+          activeStores: activeDef,
+          suspendedStores: suspendedDef
+        }));
+
+        // System alerts for expiring soon
+        const expiryAlerts = storesList
+          .filter(s => {
+            if (!s.licenseExpiry) return false;
+            const now = new Date();
+            const exp = new Date(s.licenseExpiry);
+            const diffTime = exp.getTime() - now.getTime();
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays >= 0 && diffDays <= 30; // Expiring in next 30 days
+          })
+          .map(s => ({
+            name: s.name || 'Boutique',
+            alertType: 'expiry',
+            expiryDate: s.licenseExpiry,
+            unit: 'jours'
+          }));
+        
+        setAlerts(expiryAlerts);
+      }, (err) => {
+        console.error("Super Admin real-time stores fetch issue:", err);
+      });
+
+      unsubUsers = onSnapshot(collection(db, 'users'), (usersSnap) => {
+        setStats(prev => ({
+          ...prev,
+          totalUsers: usersSnap.size
+        }));
+      }, (err) => {
+        console.error("Super Admin real-time users fetch issue:", err);
+      });
+
+      // Realtime aggregate sales for chart
+      const startOfWeek = new Date();
+      startOfWeek.setDate(today.getDate() - 7);
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      unsubSales = onSnapshot(query(
+        collection(db, 'sales'),
+        where('timestamp', '>=', startOfWeek)
+      ), (salesSnap) => {
+        const daySales: { [key: string]: number } = {};
+        const days = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+        
+        for(let i=0; i<7; i++) {
+          const d = new Date();
+          d.setDate(today.getDate() - i);
+          daySales[days[d.getDay()]] = 0;
+        }
+
+        salesSnap.forEach(doc => {
+          const data = doc.data();
+          const date = data.timestamp?.toDate();
+          if (date) {
+            const dayName = days[date.getDay()];
+            if (daySales[dayName] !== undefined) {
+              daySales[dayName] += data.totalAmount || 0;
+            }
+          }
+        });
+
+        const formattedChartData = Object.entries(daySales)
+          .map(([day, sales]) => ({ day, sales }))
+          .reverse();
+        
+        setChartData(formattedChartData);
+      }, (err) => {
+        console.error("Super Admin real-time sales fetch issue:", err);
+      });
     }
+
+    const today = new Date();
 
     if (isSuperAdmin) {
       fetchSuperAdminData();
-      return;
+      return () => {
+        if (unsubStores) unsubStores();
+        if (unsubUsers) unsubUsers();
+        if (unsubSales) unsubSales();
+      };
     }
 
     if (!userProfile?.storeId) return;
@@ -156,7 +246,6 @@ export default function Dashboard() {
         console.error("Dashboard fetch error:", error);
       }
     }
-    const today = new Date();
     fetchDashboardData();
   }, [userProfile?.storeId]);
 
