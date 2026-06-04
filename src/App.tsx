@@ -183,13 +183,13 @@ function Sidebar() {
     { icon: SettingsIcon, label: t.settings, path: '/settings', id: 'settings', module: 'settings' },
   ];
 
-  const privilegedAdmins = ['anges.gildas@gmail.com'];
+  const privilegedAdmins = ['anges.gildas@gmail.com', 'gildas@gmail.com'];
   if (privilegedAdmins.includes(auth.currentUser?.email || '')) {
     menuItems.push({ icon: ShieldAlert, label: (t as any).super_admin || 'Super Admin', path: '/super-admin', id: 'super-admin', module: 'none' });
   }
 
   const filteredItems = menuItems.filter(item => {
-    const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com';
+    const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com';
     if (isSuperAdmin) {
       if (item.id === 'super-admin' || item.id === 'settings') return true;
       let keyToCheck = item.module || item.id;
@@ -328,7 +328,7 @@ function AppRoutes({
   }, [user?.uid, userProfile, location.pathname, hasRedirected]);
 
   const hasAccess = (module: string) => {
-    const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com';
+    const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com';
     if (isSuperAdmin) {
       if (module === 'super-admin' || module === 'settings') return true;
       let keyToCheck = module;
@@ -411,7 +411,7 @@ function AppRoutes({
               <Route path="/personnel" element={hasAccess('personnel') ? <PageTransition><Personnel /></PageTransition> : <Navigate to="/" />} />
               <Route path="/clients" element={hasAccess('clients') ? <PageTransition><Clients /></PageTransition> : <Navigate to="/" />} />
               <Route path="/settings" element={hasAccess('settings') ? <PageTransition><Settings /></PageTransition> : <Navigate to="/" />} />
-              <Route path="/super-admin" element={auth.currentUser?.email === 'anges.gildas@gmail.com' ? <PageTransition><SuperAdmin /></PageTransition> : <Navigate to="/" />} />
+              <Route path="/super-admin" element={(auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com') ? <PageTransition><SuperAdmin /></PageTransition> : <Navigate to="/" />} />
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>
           </AnimatePresence>
@@ -479,6 +479,11 @@ export default function App() {
   const [preselectedClient, setPreselectedClient] = useState<Client | null>(null);
   const [verifyPasswordModal, setVerifyPasswordModal] = useState<{ open: boolean; onSuccess: (() => void) | null }>({ open: false, onSuccess: null });
   const [passwordInput, setPasswordInput] = useState('');
+  const [inactiveModal, setInactiveModal] = useState<{ isOpen: boolean; title: string; message: string }>({
+    isOpen: false,
+    title: '',
+    message: ''
+  });
 
   const hasPermission = (module: string, action: 'read' | 'create' | 'update' | 'delete'): boolean => {
     const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com';
@@ -632,7 +637,7 @@ export default function App() {
 
           if (config.isAutoRedirectEnabled && config.publicAccessUrl) {
             const targetUrl = config.publicAccessUrl;
-            const isSuperAdminEmail = auth.currentUser?.email === 'anges.gildas@gmail.com';
+            const isSuperAdminEmail = auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com';
             const isSuperAdminPath = window.location.pathname.includes('/super-admin');
             const isLoginPage = window.location.pathname.includes('/login') || window.location.pathname.includes('/auth');
             const isLocalhost = window.location.hostname === 'localhost' || 
@@ -673,7 +678,7 @@ export default function App() {
             const config = JSON.parse(cached);
             if (config.isAutoRedirectEnabled && config.publicAccessUrl) {
               const targetUrl = config.publicAccessUrl;
-              const isSuperAdminEmail = auth.currentUser?.email === 'anges.gildas@gmail.com';
+              const isSuperAdminEmail = auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com';
               const isSuperAdminPath = window.location.pathname.includes('/super-admin');
               const isLoginPage = window.location.pathname.includes('/login') || window.location.pathname.includes('/auth');
               const isLocalhost = window.location.hostname === 'localhost' || 
@@ -719,7 +724,11 @@ export default function App() {
         
         if (data.isActive === false) {
           signOut(auth);
-          alert("votre compte est es suspendu merci de contactacter l'administrateur");
+          setInactiveModal({
+            isOpen: true,
+            title: "VOTRE COMPTE EST EN COURS D'ACTIVATION",
+            message: "POUR PLUS D'INFORMATIONS VEUILLER CONTACTER L'ADMINISTRATEUR PRINCIPALE AU +22891033004"
+          });
           setLoading(false);
           return;
         }
@@ -727,7 +736,7 @@ export default function App() {
         let currentRole = data.role as UserRole;
 
         // Auto-assign roles for specific users
-        const adminEmails = ['anges.gildas@gmail.com'];
+        const adminEmails = ['anges.gildas@gmail.com', 'gildas@gmail.com'];
         if (adminEmails.includes(user.email || '') && currentRole !== 'admin') {
           await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
           currentRole = 'admin';
@@ -886,6 +895,42 @@ export default function App() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Beautiful Custom Inactive Modal */}
+      <AnimatePresence>
+        {inactiveModal.isOpen && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-md rounded-[40px] overflow-hidden shadow-2xl border border-gray-100 p-10 text-center font-sans"
+            >
+              <div className="w-20 h-20 bg-orange-50 rounded-[30px] flex items-center justify-center text-orange-500 mx-auto mb-6 shadow-xl shadow-orange-500/10">
+                <ShieldAlert size={40} />
+              </div>
+              <h3 className="text-xl font-extrabold text-slate-900 tracking-tight uppercase leading-snug mb-3">
+                {inactiveModal.title}
+              </h3>
+              <p className="text-gray-500 font-bold text-xs leading-relaxed mb-8">
+                {inactiveModal.message}
+              </p>
+              <button 
+                type="button"
+                onClick={() => {
+                  signOut(auth);
+                  setInactiveModal({ isOpen: false, title: "", message: "" });
+                  const homeUrl = window.location.origin + getAutomaticBasename();
+                  window.location.replace(homeUrl);
+                }}
+                className="w-full py-5 bg-slate-900 text-white rounded-[24px] font-black uppercase tracking-widest text-[11px] hover:bg-black transition-all shadow-xl active:scale-95"
+              >
+                OK
+              </button>
             </motion.div>
           </div>
         )}

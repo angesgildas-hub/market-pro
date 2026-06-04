@@ -13,7 +13,8 @@ service cloud.firestore {
 
     function isBootstrapAdmin() {
       return isSignedIn() && 
-             request.auth.token.get('email', '') == 'anges.gildas@gmail.com';
+             (request.auth.token.get('email', '') == 'anges.gildas@gmail.com' ||
+              request.auth.token.get('email', '') == 'gildas@gmail.com');
     }
 
     function getUserData() {

@@ -61,7 +61,7 @@ function StatCard({ title, value, icon: Icon, trend, trendValue }: any) {
 
 export default function Dashboard() {
   const { userRole, hasPermission, userProfile } = useContext(AppContext);
-  const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com';
+  const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com';
   
   const [stats, setStats] = useState({
     totalSales: 0,

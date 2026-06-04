@@ -1,6 +1,6 @@
 import React, { useState, useContext, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShoppingBag, Lock, User, ArrowRight, ShieldCheck, Mail, Eye, EyeOff, Loader2, Globe, Home } from 'lucide-react';
+import { ShoppingBag, Lock, User, ArrowRight, ShieldCheck, Mail, Eye, EyeOff, Loader2, Globe, Home, ShieldAlert } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { 
   signInWithPopup, 
@@ -14,10 +14,11 @@ import {
 import { doc, getDoc, setDoc, serverTimestamp, collection, addDoc } from 'firebase/firestore';
 import { AppContext } from '../App';
 import { StoreSettings } from '../types';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Login() {
   const { language } = useContext(AppContext);
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
@@ -27,6 +28,11 @@ export default function Login() {
   const [storeSettings, setStoreSettings] = useState<StoreSettings | null>(null);
   const [isGoogleLoginEnabled, setIsGoogleLoginEnabled] = useState(true);
   const [isRegistrationEnabled, setIsRegistrationEnabled] = useState(true);
+  const [inactiveModal, setInactiveModal] = useState<{ isOpen: boolean; title: string; message: string }>({
+    isOpen: false,
+    title: '',
+    message: ''
+  });
 
   useEffect(() => {
     const fetchStore = async () => {
@@ -111,7 +117,7 @@ export default function Login() {
     const userDocRef = doc(db, 'users', user.uid);
     const userDoc = await getDoc(userDocRef);
     
-    const privilegedAdmins = ['anges.gildas@gmail.com'];
+    const privilegedAdmins = ['anges.gildas@gmail.com', 'gildas@gmail.com'];
     const isPrivileged = privilegedAdmins.includes(user.email || '');
     const storeId = isPrivileged ? 'main' : (userDoc.exists() ? (userDoc.data().storeId || user.uid) : user.uid);
 
@@ -119,7 +125,12 @@ export default function Login() {
       const data = userDoc.data();
       if (data.isActive === false) {
         await signOut(auth);
-        throw new Error(data.pendingApproval ? "Votre boutique est en attente d'approbation par l'administrateur central." : "Votre compte est suspendu. Veuillez contacter le support.");
+        setInactiveModal({
+          isOpen: true,
+          title: "VOTRE COMPTE EST EN COURS D'ACTIVATION",
+          message: "POUR PLUS D'INFORMATIONS VEUILLER CONTACTER L'ADMINISTRATEUR PRINCIPALE AU +22891033004"
+        });
+        throw new Error("ACCOUNT_INACTIVE_MODAL");
       }
       
       // Ensure storeId exists
@@ -185,8 +196,12 @@ export default function Login() {
 
       if (!isPrivileged) {
         await signOut(auth);
-        alert("Votre demande de création de boutique a été envoyée. Un administrateur doit approuver votre accès. Vous recevrez une notification par email.");
-        return;
+        setInactiveModal({
+          isOpen: true,
+          title: "VOTRE COMPTE EST EN COURS D'ACTIVATION",
+          message: "POUR PLUS D'INFORMATIONS VEUILLER CONTACTER L'ADMINISTRATEUR PRINCIPALE AU +22891033004"
+        });
+        throw new Error("ACCOUNT_INACTIVE_MODAL");
       }
     }
 
@@ -226,6 +241,10 @@ export default function Login() {
       await syncUserProfile(result.user);
     } catch (error: any) {
       console.error("Google Login error:", error);
+      if (error.message === "ACCOUNT_INACTIVE_MODAL") {
+        setLoading(false);
+        return;
+      }
       if (error.message.includes('suspendu')) {
         alert(error.message);
       } else {
@@ -251,10 +270,32 @@ export default function Login() {
         await updateProfile(result.user, { displayName });
         await syncUserProfile(result.user, displayName, password);
       } else {
-        const result = await signInWithEmailAndPassword(auth, email, password);
-        await syncUserProfile(result.user, undefined, password);
+        try {
+          const result = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+          await syncUserProfile(result.user, undefined, password);
+        } catch (signInErr: any) {
+          const isAdminEmail = email.trim().toLowerCase() === 'gildas@gmail.com' || email.trim().toLowerCase() === 'anges.gildas@gmail.com';
+          const isUserCreationCandidate = isAdminEmail && (
+            signInErr.code === 'auth/user-not-found' || 
+            signInErr.code === 'auth/invalid-credential' || 
+            signInErr.code === 'auth/invalid-login-credentials'
+          );
+          
+          if (isUserCreationCandidate) {
+            console.log("Admin user not found in Firebase Auth during sign in, auto-registering...");
+            const result = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+            await updateProfile(result.user, { displayName: "Admin" });
+            await syncUserProfile(result.user, "Admin", password);
+          } else {
+            throw signInErr;
+          }
+        }
       }
     } catch (error: any) {
+      if (error.message === "ACCOUNT_INACTIVE_MODAL") {
+        setLoading(false);
+        return;
+      }
       const isAuthError = error.code && error.code.startsWith('auth/');
       if (isAuthError) {
         console.warn("Auth failure:", error.code, error.message);
@@ -489,6 +530,41 @@ export default function Login() {
            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">© 2026 G-TECH LAB • Tous droits réservés</p>
         </div>
       </motion.div>
+
+      {/* Beautiful Custom Inactive Modal */}
+      <AnimatePresence>
+        {inactiveModal.isOpen && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-md rounded-[40px] overflow-hidden shadow-2xl border border-gray-100 p-10 text-center font-sans animate-none"
+            >
+              <div className="w-20 h-20 bg-orange-50 rounded-[30px] flex items-center justify-center text-orange-500 mx-auto mb-6 shadow-xl shadow-orange-500/10">
+                <ShieldAlert size={40} />
+              </div>
+              <h3 className="text-xl font-extrabold text-slate-900 tracking-tight uppercase leading-snug mb-3">
+                {inactiveModal.title}
+              </h3>
+              <p className="text-gray-500 font-bold text-xs leading-relaxed mb-8">
+                {inactiveModal.message}
+              </p>
+              <button 
+                type="button"
+                onClick={() => {
+                  signOut(auth);
+                  setInactiveModal({ isOpen: false, title: "", message: "" });
+                  navigate('/');
+                }}
+                className="w-full py-5 bg-slate-900 text-white rounded-[24px] font-black uppercase tracking-widest text-[11px] hover:bg-black transition-all shadow-xl active:scale-95"
+              >
+                OK
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

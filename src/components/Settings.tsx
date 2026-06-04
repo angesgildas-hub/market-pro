@@ -215,7 +215,7 @@ export default function Settings() {
   });
 
   const getUserDefaultPermissions = (email: string): UserPermissions => {
-    if (email === 'anges.gildas@gmail.com') {
+    if (email === 'anges.gildas@gmail.com' || email === 'gildas@gmail.com') {
       return fullAdminPermissions();
     }
     return defaultPermissions();
@@ -573,11 +573,11 @@ export default function Settings() {
     }
   };
 
-  const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com';
+  const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com';
 
   const handleDeleteUser = async (uid: string) => {
     const userToDelete = users.find(u => u.uid === uid);
-    const adminEmails = ['anges.gildas@gmail.com'];
+    const adminEmails = ['anges.gildas@gmail.com', 'gildas@gmail.com'];
     
     if (uid === auth.currentUser?.uid) {
       alert("Vous ne pouvez pas vous supprimer vous-même.");

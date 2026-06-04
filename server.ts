@@ -161,8 +161,6 @@ Text: ${text}`);
       console.log(`[Email Service] Email sent successfully: ${info.messageId}`);
       return res.json({ success: true, messageId: info.messageId });
     } catch (err: any) {
-      console.error(`[Email Service Error] Failed to send email to ${to}:`, err);
-      
       const isAuthError = err.code === 'EAUTH' || 
                            err.message?.includes('535') || 
                            err.message?.toLowerCase().includes('login') ||
@@ -170,9 +168,10 @@ Text: ${text}`);
                            err.message?.toLowerCase().includes('credentials');
 
       if (isAuthError) {
-        console.error(`
+        console.warn(`[Email Service Warning] SMTP Authentication failed for ${to} (User: ${smtpUser}). Gmail requires an App Password instead of a normal account password. Details:`, err.message);
+        console.warn(`
 ========================================================================
-🚨 [SMTP AUTHENTICATION ERROR]
+🚨 [SMTP AUTHENTICATION WARNING]
 Nodemailer was unable to authenticate with the SMTP server using:
 - Host: ${smtpHost}:${smtpPort}
 - User: ${smtpUser}
@@ -197,9 +196,9 @@ Pour corriger, mettez à jour vos variables d'environnement (SMTP_USER, SMTP_PAS
 
       const isConnectionError = err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND';
       if (isConnectionError) {
-        console.error(`
+        console.warn(`
 ========================================================================
-🔌 [SMTP CONNECTION ERROR]
+🔌 [SMTP CONNECTION WARNING]
 Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
 - Code d'erreur : ${err.code}
 - Message : ${err.message}
@@ -213,6 +212,7 @@ Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
         });
       }
 
+      console.warn(`[Email Service Warning] Failed to send email to ${to}:`, err.message || err);
       return res.status(200).json({ 
         success: false, 
         error: "Failed to send email", 
@@ -225,7 +225,7 @@ Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
   app.post("/api/admin/update-user-auth", async (req, res) => {
     const { uid, email, password, callerEmail } = req.body;
 
-    if (callerEmail !== "anges.gildas@gmail.com") {
+    if (callerEmail !== "anges.gildas@gmail.com" && callerEmail !== "gildas@gmail.com") {
       return res.status(403).json({ success: false, error: "Accès refusé" });
     }
 

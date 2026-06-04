@@ -85,7 +85,7 @@ export default function SalesHistory() {
     }
   };
 
-  const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com';
+  const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com';
 
   const handleDelete = async (id: string) => {
     if (!hasPermission('sales', 'delete')) {
