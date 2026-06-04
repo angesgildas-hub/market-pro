@@ -28,10 +28,98 @@ async function startServer() {
   // Always bind unconditionally to port 3000 per platform infrastructure constraints
   const PORT = 3000;
 
-  // Body parser
-  app.use(express.json());
+  // Body parser with payload limit (protects against extremely large requests designed to cause memory exhaustion)
+  app.use(express.json({ limit: "150kb" }));
 
-  // API routes
+  // Custom Security Headers Middlewares
+  app.use((req, res, next) => {
+    // Prevent browsers from sniffing MIME types away from declared Content-Type header
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    // Enable built-in browser reflected XSS filter protections
+    res.setHeader("X-XSS-Protection", "1; mode=block");
+    // Control how referrer information is transferred on requests
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    // DNS Prefetch Control
+    res.setHeader("X-DNS-Prefetch-Control", "off");
+    next();
+  });
+
+  // Stateful, robust IP Rate Limiter to protect against brute-force, DOS, and spam scripts
+  const rateLimitStore: Record<string, number[]> = {};
+  
+  // Clean up rate-limiting cache memory leakage every 10 minutes
+  setInterval(() => {
+    const now = Date.now();
+    for (const ip in rateLimitStore) {
+      rateLimitStore[ip] = rateLimitStore[ip].filter(timestamp => now - timestamp < 60000);
+      if (rateLimitStore[ip].length === 0) {
+        delete rateLimitStore[ip];
+      }
+    }
+  }, 10 * 60 * 1000);
+
+  function rateLimiter(limit: number, windowMs: number = 60000) {
+    return (req: any, res: any, next: any) => {
+      const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "anonymous").split(",")[0].trim();
+      const now = Date.now();
+      
+      if (!rateLimitStore[ip]) {
+        rateLimitStore[ip] = [];
+      }
+      
+      rateLimitStore[ip] = rateLimitStore[ip].filter(ts => now - ts < windowMs);
+      
+      if (rateLimitStore[ip].length >= limit) {
+        console.warn(`[Security Warning] Rate limit triggered for IP: ${ip} on route: ${req.originalUrl}`);
+        return res.status(429).json({ 
+          success: false, 
+          error: "Trop de requêtes", 
+          message: "Activité suspendue par mesure de sécurité : Trop de tentatives. Veuillez patienter une minute." 
+        });
+      }
+      
+      rateLimitStore[ip].push(now);
+      next();
+    };
+  }
+
+  // Universal API Sanitization Middleware for preventing remote HTML, script, and code injections
+  app.use("/api", (req, res, next) => {
+    const sanitizeValue = (val: any): any => {
+      if (typeof val === "string") {
+        // Strip tags and dangerous scripting patterns
+        let s = val.replace(/<[^>]*>/g, "");
+        s = s.replace(/javascript\s*:/gi, "");
+        s = s.replace(/onload\s*=/gi, "");
+        s = s.replace(/onerror\s*=/gi, "");
+        s = s.replace(/onclick\s*=/gi, "");
+        return s.trim().slice(0, 1000);
+      }
+      if (val && typeof val === "object" && !Array.isArray(val)) {
+        const cleaned: Record<string, any> = {};
+        for (const k in val) {
+          if (Object.prototype.hasOwnProperty.call(val, k)) {
+            cleaned[k] = sanitizeValue(val[k]);
+          }
+        }
+        return cleaned;
+      }
+      return val;
+    };
+
+    if (req.body) {
+      req.body = sanitizeValue(req.body);
+    }
+    next();
+  });
+
+  // API rate-limit bindings for security
+  app.use("/api/send-email", rateLimiter(10));             // Prevent email flood triggers
+  app.use("/api/admin/update-user-auth", rateLimiter(5));   // Prevent credential stuffing
+  app.use("/api/saas/proxy", rateLimiter(15));               // Prevent webhook proxy flood
+  app.use("/api/saas/webhook", rateLimiter(25));             // Prevent license poisoning
+
+  // API health route
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
@@ -229,6 +317,18 @@ Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
       return res.status(403).json({ success: false, error: "Accès refusé" });
     }
 
+    if (!uid || typeof uid !== "string" || !uid.match(/^[a-zA-Z0-9_\-]+$/) || uid.length > 128) {
+      return res.status(400).json({ success: false, error: "Format uid invalide" });
+    }
+
+    if (email && (typeof email !== "string" || !email.includes("@") || email.length > 150)) {
+      return res.status(400).json({ success: false, error: "Format email invalide" });
+    }
+
+    if (password && (typeof password !== "string" || password.length < 6 || password.length > 100)) {
+      return res.status(400).json({ success: false, error: "Format de mot de passe invalide (6-100 caractères)" });
+    }
+
     try {
       // Dynamic import to avoid any static loading side-effects
       const { default: admin } = await import("firebase-admin");
@@ -305,6 +405,18 @@ Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
     
     if (!storeId || !licenseStatus) {
       return res.status(400).json({ success: false, error: "storeId et licenseStatus sont requis" });
+    }
+
+    if (typeof storeId !== "string" || !storeId.match(/^[a-zA-Z0-9_\-]+$/) || storeId.length > 128) {
+      return res.status(400).json({ success: false, error: "Format storeId invalide" });
+    }
+
+    if (typeof licenseStatus !== "string" || !["active", "pending", "inactive", "suspended", "approved"].includes(licenseStatus)) {
+      return res.status(400).json({ success: false, error: "Statut de licence invalide" });
+    }
+
+    if (licenseExpiry && (typeof licenseExpiry !== "string" || licenseExpiry.length > 50)) {
+      return res.status(400).json({ success: false, error: "Format de date d'expiration invalide" });
     }
 
     try {

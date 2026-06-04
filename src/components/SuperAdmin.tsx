@@ -2335,7 +2335,7 @@ RewriteRule ^(.*)$ https://ais-pre-6...run.app/$1 [L,R=301,NE,QSA]`}
                         type="tel" 
                         value={newStoreData.phone}
                         onChange={(e) => setNewStoreData({...newStoreData, phone: e.target.value})}
-                        placeholder="+225..."
+                        placeholder="+228..."
                         className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-4 focus:ring-orange-500/10 outline-none font-bold transition-all"
                       />
                     </div>
@@ -2345,7 +2345,7 @@ RewriteRule ^(.*)$ https://ais-pre-6...run.app/$1 [L,R=301,NE,QSA]`}
                         type="text" 
                         value={newStoreData.address}
                         onChange={(e) => setNewStoreData({...newStoreData, address: e.target.value})}
-                        placeholder="Abidjan, Cocody"
+                        placeholder="Lomé, Agoè-Nyivé"
                         className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-4 focus:ring-orange-500/10 outline-none font-bold transition-all"
                       />
                     </div>

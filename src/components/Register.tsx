@@ -27,6 +27,15 @@ import { Link, useNavigate } from 'react-router-dom';
 
 const countries = [
   { 
+    code: 'TG', 
+    name: 'Togo', 
+    dialCode: '+228',
+    operators: [
+      { id: 'tmoney_tg', name: 'TMoney', icon: Smartphone },
+      { id: 'moov_tg', name: 'Moov Money', icon: Smartphone },
+    ]
+  },
+  { 
     code: 'CI', 
     name: 'Côte d\'Ivoire', 
     dialCode: '+225',
@@ -72,15 +81,6 @@ const countries = [
     operators: [
       { id: 'mtn_bj', name: 'MTN Mobile Money', icon: Smartphone },
       { id: 'moov_bj', name: 'Moov Money', icon: Smartphone },
-    ]
-  },
-  { 
-    code: 'TG', 
-    name: 'Togo', 
-    dialCode: '+228',
-    operators: [
-      { id: 'tmoney_tg', name: 'TMoney', icon: Smartphone },
-      { id: 'moov_tg', name: 'Moov Money', icon: Smartphone },
     ]
   },
   { 
@@ -348,7 +348,7 @@ export default function Register() {
                       <MapPin className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-orange-500 transition-colors" size={18} />
                       <input 
                         type="text" 
-                        placeholder="Abidjan, Cocody, Riviera 3"
+                        placeholder="Lomé, Agoè-Nyivé, Togo"
                         value={formData.address}
                         onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
                         className="w-full pl-14 pr-6 py-4 bg-slate-50 border-2 border-transparent rounded-[24px] focus:bg-white focus:border-orange-500/20 outline-none font-bold text-slate-700 shadow-sm text-sm"

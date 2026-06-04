@@ -200,7 +200,7 @@ const CEDEAO_COUNTRIES = [
 
 export default function MobileMoney() {
   const { userProfile, userRole } = useContext(AppContext);
-  const [selectedCountry, setSelectedCountry] = useState<string>('SN');
+  const [selectedCountry, setSelectedCountry] = useState<string>('TG');
   const [transactions, setTransactions] = useState<MobileTransaction[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);

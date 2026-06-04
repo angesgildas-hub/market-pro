@@ -17,6 +17,7 @@ export default function SalesHistory() {
   const [selectedSaleItems, setSelectedSaleItems] = useState<CartItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
   const [storeSettings, setStoreSettings] = useState<StoreSettings | null>(null);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
   const [dateRange, setDateRange] = useState({
     start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
@@ -177,6 +178,85 @@ export default function SalesHistory() {
     }
   };
 
+  const handleCloseRegister = async () => {
+    if (!userProfile?.storeId) return;
+    setIsGeneratingReport(true);
+    try {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      
+      const q = query(
+        collection(db, 'sales'),
+        where('storeId', '==', userProfile.storeId),
+        where('timestamp', '>=', startOfDay),
+        orderBy('timestamp', 'desc')
+      );
+      
+      const snap = await getDocs(q);
+      const daySales = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const totalSales = daySales.reduce((sum: number, sale: any) => sum + (sale.totalAmount || 0), 0);
+      
+      const docPDF = new jsPDF({
+        unit: 'mm',
+        format: [80, 150]
+      });
+
+      docPDF.setFontSize(14);
+      docPDF.setFont('helvetica', 'bold');
+      docPDF.text(storeSettings?.name || "MARKET PRO", 40, 15, { align: 'center' });
+      
+      docPDF.setFontSize(10);
+      docPDF.text("CLÔTURE DE CAISSE", 40, 22, { align: 'center' });
+      
+      docPDF.setFontSize(8);
+      docPDF.setFont('helvetica', 'normal');
+      docPDF.text(`Date: ${new Date().toLocaleDateString()}`, 40, 28, { align: 'center' });
+      docPDF.text(`Heure: ${new Date().toLocaleTimeString()}`, 40, 32, { align: 'center' });
+      docPDF.text(`Vendeur: ${userProfile?.displayName || auth.currentUser?.displayName || 'Admin'}`, 40, 36, { align: 'center' });
+
+      docPDF.line(5, 40, 75, 40);
+      
+      docPDF.setFontSize(9);
+      docPDF.setFont('helvetica', 'bold');
+      docPDF.text("RÉSUMÉ DES VENTES", 5, 48);
+      
+      docPDF.setFontSize(8);
+      docPDF.setFont('helvetica', 'normal');
+      docPDF.text(`Nombre de ventes: ${daySales.length}`, 5, 54);
+      
+      docPDF.setFontSize(10);
+      docPDF.setFont('helvetica', 'bold');
+      docPDF.text(`TOTAL DES ENTRÉES VENTE:`, 5, 65);
+      docPDF.setFontSize(12);
+      docPDF.text(`${totalSales.toLocaleString('de-DE')} CFA`, 40, 75, { align: 'center' });
+      
+      docPDF.setFontSize(8);
+      docPDF.setFont('helvetica', 'italic');
+      docPDF.text("Arrêté la présente caisse à la somme de:", 40, 85, { align: 'center' });
+      docPDF.setFont('helvetica', 'bold');
+      docPDF.text(`${totalSales.toLocaleString('de-DE')} CFA`, 40, 90, { align: 'center' });
+
+      docPDF.line(5, 100, 75, 100);
+      docPDF.text("Signature du Caissier", 40, 110, { align: 'center' });
+      
+      const pdfOutput = docPDF.output('blob');
+      const blobUrl = URL.createObjectURL(pdfOutput);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = blobUrl;
+      downloadLink.download = `Cloture_Caisse_${new Date().toISOString().split('T')[0]}.pdf`;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+      URL.revokeObjectURL(blobUrl);
+      
+      alert(`Caisse clôturée avec succès !\nTotal: ${totalSales.toLocaleString()} CFA`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'sales');
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
+
   const filteredSales = sales.filter(sale => 
     sale.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
     sale.paymentMethod.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -198,21 +278,31 @@ export default function SalesHistory() {
           <h1 className="text-4xl font-bold tracking-tight text-gray-900">Historique des Ventes</h1>
           <p className="text-gray-500 font-medium">Consultez les dernières transactions effectuées.</p>
         </div>
-        <div className="flex items-center gap-3 bg-white p-2 rounded-2xl border border-gray-100 shadow-sm">
-          <Calendar size={18} className="text-gray-400 ml-2" />
-          <input 
-            type="date" 
-            value={dateRange.start} 
-            onChange={e => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-            className="bg-transparent border-none text-xs font-black uppercase outline-none"
-          />
-          <span className="text-gray-300">/</span>
-          <input 
-            type="date" 
-            value={dateRange.end} 
-            onChange={e => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-            className="bg-transparent border-none text-xs font-black uppercase outline-none"
-          />
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-center gap-3 bg-white p-2 rounded-2xl border border-gray-100 shadow-sm">
+            <Calendar size={18} className="text-gray-400 ml-2" />
+            <input 
+              type="date" 
+              value={dateRange.start} 
+              onChange={e => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+              className="bg-transparent border-none text-xs font-black uppercase outline-none"
+            />
+            <span className="text-gray-300">/</span>
+            <input 
+              type="date" 
+              value={dateRange.end} 
+              onChange={e => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+              className="bg-transparent border-none text-xs font-black uppercase outline-none"
+            />
+          </div>
+          <button 
+            onClick={handleCloseRegister}
+            disabled={isGeneratingReport}
+            className="flex items-center justify-center gap-2 px-4 py-3 bg-gray-900 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg active:scale-95 disabled:opacity-50"
+          >
+            {isGeneratingReport ? <Loader2 className="animate-spin" size={14} /> : <Printer size={14} className="text-orange-500" />}
+            Rapport Journalier
+          </button>
         </div>
       </div>
 

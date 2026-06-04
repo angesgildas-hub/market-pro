@@ -129,8 +129,9 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'storeId', 'email', 'role']) &&
-             data.uid is string &&
-             data.storeId is string &&
+             data.uid is string && data.uid.size() <= 128 &&
+             data.storeId is string && data.storeId.size() <= 128 &&
+             data.email is string && data.email.size() <= 150 &&
              data.role in ['admin', 'manager', 'cashier'];
     }
 
@@ -221,7 +222,10 @@ service cloud.firestore {
 
     function isValidExpense(data) {
       return data.keys().hasAll(['storeId', 'title', 'amount', 'category', 'date']) &&
-             data.storeId is string &&
+             data.storeId is string && data.storeId.size() <= 128 &&
+             data.title is string && data.title.size() <= 200 &&
+             data.category is string && data.category.size() <= 100 &&
+             data.date is string && data.date.size() <= 50 &&
              data.amount is number && data.amount >= 0;
     }
 
@@ -235,8 +239,8 @@ service cloud.firestore {
 
     function isValidAuditLog(data) {
       return data.keys().hasAll(['storeId', 'action', 'userId', 'timestamp']) &&
-             data.storeId is string &&
-             data.action is string &&
+             data.storeId is string && data.storeId.size() <= 128 &&
+             data.action is string && data.action.size() <= 500 &&
              data.userId == request.auth.uid;
     }
 
