@@ -196,12 +196,12 @@ export default function SuperAdmin() {
     }
   };
 
-  const handleUpdateDomainConfig = async (url: string, enabled: boolean) => {
+  const handleUpdateDomainConfig = async (url: string, enabled: boolean | undefined) => {
     try {
       const configRef = doc(db, 'systemConfig', 'globals');
       await setDoc(configRef, { 
         publicAccessUrl: url,
-        isAutoRedirectEnabled: enabled,
+        isAutoRedirectEnabled: enabled ?? false,
         updatedAt: serverTimestamp()
       }, { merge: true });
       alert("Configuration du domaine mise à jour.");

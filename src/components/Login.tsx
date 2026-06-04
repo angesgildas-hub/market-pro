@@ -274,7 +274,7 @@ export default function Login() {
           error.code === 'auth/user-not-found' || 
           error.code === 'auth/wrong-password' || 
           error.code === 'auth/invalid-email') {
-        message = "identifiant incorrecte veuillez ressayer";
+        message = "vos indentifiants ne sont pas correct veuillez ressayer";
       } else if (error.code === 'auth/email-already-in-use') {
         message = "Cette adresse email est déjà associée à un compte.";
       } else if (error.code === 'auth/weak-password') {
