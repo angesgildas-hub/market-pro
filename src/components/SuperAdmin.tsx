@@ -29,7 +29,8 @@ export default function SuperAdmin() {
   const [newStoreData, setNewStoreData] = useState({ name: '', adminEmail: '', address: '', phone: '' });
   const [systemConfig, setSystemConfig] = useState<any>(null);
   const [domainUrl, setDomainUrl] = useState('');
-  const [activeTab, setActiveTab] = useState<'stores' | 'connections' | 'saas' | 'redirection'>('stores');
+  const [activeTab, setActiveTab] = useState<'stores' | 'users' | 'connections' | 'saas' | 'redirection'>('stores');
+  const [userSearchQuery, setUserSearchQuery] = useState('');
   const [connectionLogs, setConnectionLogs] = useState<any[]>([]);
   const [logsLimit, setLogsLimit] = useState<number>(100);
 
@@ -411,19 +412,41 @@ export default function SuperAdmin() {
           const querySnap = await getDocs(q);
           querySnap.docs.forEach(docSnap => {
             const userData = docSnap.data();
-            if (userData && (userData.pendingApproval || userData.isActive === false)) {
-              usersToApproveMap.set(docSnap.id, { ...userData, uid: docSnap.id } as UserProfile);
-            }
+            usersToApproveMap.set(docSnap.id, { ...userData, uid: docSnap.id } as UserProfile);
           });
         } catch (err) {
           console.warn("Could not fetch users directly by storeId query:", err);
         }
 
         // 4. Update and send notifications
+        // Direct forced activation fallback for primary creator UID (which is equal to storeId)
+        try {
+          const uSnap = await getDoc(doc(db, 'users', storeId));
+          if (uSnap.exists()) {
+            const uData = uSnap.data();
+            usersToApproveMap.set(storeId, { ...uData, uid: storeId } as UserProfile);
+          }
+        } catch (err) {
+          console.warn("Direct lookup of store creator user doc failed:", err);
+        }
+
+        // Direct forced activation fallback for explicit admin UID
+        if (adminUid && adminUid !== storeId) {
+          try {
+            const uSnap = await getDoc(doc(db, 'users', adminUid));
+            if (uSnap.exists()) {
+              const uData = uSnap.data();
+              usersToApproveMap.set(adminUid, { ...uData, uid: adminUid } as UserProfile);
+            }
+          } catch (err) {
+            console.warn("Direct lookup of explicit adminUid user doc failed:", err);
+          }
+        }
+
         for (const [uid, user] of usersToApproveMap.entries()) {
           await updateDoc(doc(db, 'users', uid), { 
             isActive: true, 
-            pendingApproval: false,
+            pendingApproval: false, 
             updatedAt: serverTimestamp()
           });
           // Send approval email directly to user's mailbox (non-blocking)
@@ -1105,7 +1128,7 @@ export default function SuperAdmin() {
       )}
 
       {/* Dynamic Tab Switchers */}
-      <div className="flex items-center gap-3 bg-white/60 p-1.5 border border-gray-100 rounded-2xl w-fit shadow-sm backdrop-blur-md mb-6">
+      <div className="flex flex-wrap items-center gap-3 bg-white/60 p-1.5 border border-gray-100 rounded-2xl w-fit shadow-sm backdrop-blur-md mb-6">
         <button
           onClick={() => setActiveTab('stores')}
           className={`px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all duration-300 flex items-center gap-2 ${
@@ -1116,6 +1139,17 @@ export default function SuperAdmin() {
         >
           <Store size={14} />
           Boutiques Abonnées
+        </button>
+        <button
+          onClick={() => setActiveTab('users')}
+          className={`px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all duration-300 flex items-center gap-2 ${
+            activeTab === 'users'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-gray-400 hover:text-slate-900 hover:bg-gray-50'
+          }`}
+        >
+          <Users size={14} />
+          Gestion des Utilisateurs
         </button>
         <button
           onClick={() => setActiveTab('connections')}
@@ -1323,6 +1357,150 @@ export default function SuperAdmin() {
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : activeTab === 'users' ? (
+        <div className="bg-white rounded-[40px] border border-gray-100 shadow-xl shadow-gray-200/30 overflow-hidden animate-fade-in">
+          <div className="px-8 py-6 border-b border-gray-50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-black text-gray-900 tracking-tight uppercase italic flex items-center gap-2">
+                <Users size={20} className="text-orange-500" />
+                Liste des Utilisateurs Enregistrés
+              </h2>
+              <p className="text-xs text-gray-500 font-medium">Recherchez, activez, désactivez ou gérez les rôles de n'importe quel utilisateur du système.</p>
+            </div>
+            
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+              <input
+                type="text"
+                placeholder="Rechercher e-mail, nom..."
+                value={userSearchQuery}
+                onChange={(e) => setUserSearchQuery(e.target.value)}
+                className="pl-11 pr-5 py-3 bg-gray-50 border border-gray-100 rounded-2xl text-xs font-bold text-gray-900 focus:outline-none focus:bg-white focus:border-slate-900 transition-all w-full md:w-80 shadow-inner"
+              />
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-gray-50 bg-gray-50/50">
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Utilisateur</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Boutique Associée</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Rôle</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Date de Création</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Statut</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {allUsers
+                  .filter(user => {
+                    if (!userSearchQuery) return true;
+                    const queryStr = userSearchQuery.toLowerCase();
+                    return (
+                      user.email?.toLowerCase().includes(queryStr) ||
+                      user.displayName?.toLowerCase().includes(queryStr) ||
+                      user.uid?.toLowerCase().includes(queryStr)
+                    );
+                  })
+                  .map(user => {
+                    const shop = stores.find(s => s.id === user.storeId);
+                    const isPending = user.pendingApproval === true;
+                    const isActive = user.isActive !== false;
+                    
+                    return (
+                      <tr key={`user-row-${user.uid}`} className="hover:bg-gray-50/30 transition-all group">
+                        <td className="px-8 py-5">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center overflow-hidden border border-gray-200">
+                              {user.photoURL ? (
+                                <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                              ) : (
+                                <User size={18} className="text-gray-400" />
+                              )}
+                            </div>
+                            <div>
+                              <p className="font-black text-gray-900 text-sm tracking-tight">{user.displayName || 'Sans nom'}</p>
+                              <p className="text-[10px] font-bold text-gray-400">{user.email}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-8 py-5">
+                          {shop ? (
+                            <div>
+                              <p className="font-bold text-gray-900 text-xs">{shop.name}</p>
+                              <p className="text-[10px] font-mono text-gray-400">{shop.subdomain || 'Pas de sous-domaine'}</p>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] font-black uppercase text-gray-400 italic">Boutique inconnue</span>
+                          )}
+                        </td>
+                        <td className="px-8 py-5">
+                          <span className="px-3 py-1 bg-gray-100 rounded-full text-[8px] font-black uppercase tracking-widest text-gray-500 border border-gray-200">
+                            {user.role}
+                          </span>
+                        </td>
+                        <td className="px-8 py-5">
+                          <p className="text-xs text-gray-500 font-bold">
+                            {user.createdAt ? (
+                              typeof user.createdAt === 'string' 
+                                ? new Date(user.createdAt).toLocaleDateString()
+                                : user.createdAt.toDate 
+                                  ? user.createdAt.toDate().toLocaleDateString()
+                                  : new Date(user.createdAt).toLocaleDateString()
+                            ) : 'N/A'}
+                          </p>
+                        </td>
+                        <td className="px-8 py-5 text-xs font-semibold">
+                          <span className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 w-fit ${
+                            isActive 
+                              ? 'bg-green-50 text-green-700 border border-green-100' 
+                              : isPending 
+                                ? 'bg-orange-50 text-orange-700 border border-orange-100' 
+                                : 'bg-red-50 text-red-700 border border-red-100'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-600' : isPending ? 'bg-orange-600' : 'bg-red-600'}`} />
+                            {isActive ? 'Actif' : isPending ? 'En attente' : 'Suspendu / Inactif'}
+                          </span>
+                        </td>
+                        <td className="px-8 py-5 text-right">
+                          <div className="flex items-center justify-end gap-2 text-right">
+                            {isPending && (
+                              <button
+                                onClick={async () => {
+                                  showConfirm(
+                                    "Approuver cet utilisateur",
+                                    `Voulez-vous approuver l'accès au système pour ${user.displayName || user.email} et activer sa boutique ?`,
+                                    async () => {
+                                      await handleUpdateLicense(user.storeId, 'active', 12, user.uid);
+                                    }
+                                  );
+                                }}
+                                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-[9px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-green-100"
+                              >
+                                Approuver
+                              </button>
+                            )}
+                            
+                            <button
+                              onClick={() => handleToggleUserStatus(user.uid, isActive)}
+                              className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-xl transition-all ${
+                                isActive 
+                                  ? 'bg-red-50 text-red-600 hover:bg-red-600 hover:text-white' 
+                                  : 'bg-green-50 text-green-600 hover:bg-green-600 hover:text-white'
+                              }`}
+                            >
+                              {isActive ? 'Suspendre' : 'Rétablir'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
           </div>

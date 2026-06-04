@@ -197,8 +197,11 @@ service cloud.firestore {
                       (isSignedIn() && isAdmin() && incoming().storeId == userStoreId() && incoming().uid == userId && isValidUser(incoming())) || 
                       (isSignedIn() && request.auth.uid == userId && incoming().uid == userId && incoming().role == 'admin' && incoming().isActive == false);
       allow update: if isBootstrapAdmin() || 
-                      (isAdmin() && existing().storeId == userStoreId() && incoming().storeId == existing().storeId) ||
-                      (request.auth.uid == userId && incoming().role == existing().role && incoming().storeId == existing().storeId && incoming().isActive == existing().isActive);
+                      (isAdmin() && (!existing().keys().hasAll(['storeId']) || existing().storeId == userStoreId()) && incoming().storeId == (existing().keys().hasAll(['storeId']) ? existing().storeId : incoming().storeId)) ||
+                      (request.auth.uid == userId && 
+                       (!existing().keys().hasAll(['role']) || incoming().role == existing().role) && 
+                       (!existing().keys().hasAll(['storeId']) || incoming().storeId == existing().storeId) && 
+                       (!existing().keys().hasAll(['isActive']) || incoming().isActive == existing().isActive));
       allow delete: if isBootstrapAdmin() || (isAdmin() && existing().storeId == userStoreId());
     }
 

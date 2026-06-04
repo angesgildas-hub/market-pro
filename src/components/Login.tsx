@@ -1,4 +1,4 @@
-import React, { useState, useContext, useEffect } from 'react';
+import React, { useState, useContext, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ShoppingBag, Lock, User, ArrowRight, ShieldCheck, Mail, Eye, EyeOff, Loader2, Globe, Home, ShieldAlert } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
@@ -18,6 +18,7 @@ import { Link, useNavigate } from 'react-router-dom';
 
 export default function Login() {
   const { language } = useContext(AppContext);
+  const isSyncingRef = useRef(false);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -99,7 +100,8 @@ export default function Login() {
   useEffect(() => {
     // Auto-sync profile if user is logged in but profile is missing (handled by App.tsx)
     const checkSync = async () => {
-      if (auth.currentUser && !loading) {
+      if (auth.currentUser && !loading && !isSyncingRef.current) {
+        isSyncingRef.current = true;
         setLoading(true);
         try {
           await syncUserProfile(auth.currentUser);
@@ -107,6 +109,7 @@ export default function Login() {
           console.error("Auto-sync error:", e);
         } finally {
           setLoading(false);
+          isSyncingRef.current = false;
         }
       }
     };
@@ -235,6 +238,7 @@ export default function Login() {
 
   const handleGoogleLogin = async () => {
     setLoading(true);
+    isSyncingRef.current = true;
     try {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
@@ -245,6 +249,10 @@ export default function Login() {
         setLoading(false);
         return;
       }
+      if (!auth.currentUser) {
+        setLoading(false);
+        return;
+      }
       if (error.message.includes('suspendu')) {
         alert(error.message);
       } else {
@@ -252,6 +260,7 @@ export default function Login() {
       }
     } finally {
       setLoading(false);
+      isSyncingRef.current = false;
     }
   };
 
@@ -264,6 +273,7 @@ export default function Login() {
     }
 
     setLoading(true);
+    isSyncingRef.current = true;
     try {
       if (isRegistering) {
         const result = await createUserWithEmailAndPassword(auth, email, password);
@@ -293,6 +303,10 @@ export default function Login() {
       }
     } catch (error: any) {
       if (error.message === "ACCOUNT_INACTIVE_MODAL") {
+        setLoading(false);
+        return;
+      }
+      if (!auth.currentUser) {
         setLoading(false);
         return;
       }
@@ -327,6 +341,7 @@ export default function Login() {
       alert(message);
     } finally {
       setLoading(false);
+      isSyncingRef.current = false;
     }
   };
 
