@@ -20,7 +20,9 @@ import {
   Users,
   Package as PackageIcon,
   Lock,
-  Smartphone
+  Smartphone,
+  Store,
+  MessageSquare
 } from 'lucide-react';
 import { onSnapshot, collection, doc, getDoc, setDoc, updateDoc, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
@@ -39,6 +41,7 @@ import Login from './components/Login';
 import LandingPage from './components/LandingPage';
 import Register from './components/Register';
 import MobileMoney from './components/MobileMoney';
+import Chat from './components/Chat';
 import { translations, Language } from './lib/translations';
 import { UserRole, StoreSettings, Client, UserProfile } from './types';
 
@@ -68,11 +71,40 @@ function UserHeader({ isLicenseValid }: { isLicenseValid: boolean }) {
   const t = translations[language];
   const user = auth.currentUser;
   const [time, setTime] = useState(new Date());
+  const [familyStores, setFamilyStores] = useState<StoreSettings[]>([]);
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!userProfile?.storeId || !settings) {
+      setFamilyStores([]);
+      return;
+    }
+
+    const parentStoreId = settings.parentStoreId || settings.id;
+
+    // Listen to real-time changes in all store settings in the system
+    const q = query(collection(db, 'storeSettings'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const allStoresList = snap.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+      } as StoreSettings));
+      
+      const filtered = allStoresList.filter(s => 
+        s.id === parentStoreId || (s as any).parentStoreId === parentStoreId
+      );
+      
+      setFamilyStores(filtered);
+    }, (error) => {
+      console.warn("Error subscribing to family stores:", error);
+    });
+
+    return () => unsubscribe();
+  }, [userProfile?.storeId, settings?.parentStoreId, settings?.id]);
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('fr-FR', { 
@@ -106,7 +138,34 @@ function UserHeader({ isLicenseValid }: { isLicenseValid: boolean }) {
        </div>
 
        <div className="flex-1 hidden xl:flex items-center justify-center">
-          {settings?.subdomain && (
+          {familyStores.length > 1 && (userRole === 'admin' || userProfile?.role === 'admin') ? (
+            <div className="px-4 py-2 bg-orange-50 border border-orange-100 rounded-2xl flex items-center gap-3 group">
+              <Store size={15} className="text-orange-500 animate-pulse" />
+              <div className="flex flex-col">
+                <span className="text-[8px] font-black text-orange-400 uppercase tracking-widest leading-none">Boutique Active</span>
+                <select
+                  value={userProfile.storeId}
+                  onChange={async (e) => {
+                    const newStoreId = e.target.value;
+                    if (newStoreId && user) {
+                      try {
+                        await updateDoc(doc(db, 'users', user.uid), { storeId: newStoreId });
+                      } catch (err) {
+                        console.error("Error switching store:", err);
+                      }
+                    }
+                  }}
+                  className="text-xs font-black text-slate-900 bg-transparent border-none outline-none cursor-pointer pr-1"
+                >
+                  {familyStores.map(s => (
+                    <option key={`switch-store-header-${s.id}`} value={s.id}>
+                      {s.name} {s.id === (settings?.parentStoreId || settings?.id) ? '(Principale)' : '(Sous-boutique)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : settings?.subdomain ? (
             <div className="px-4 py-2 bg-orange-50 border border-orange-100 rounded-2xl flex items-center gap-3 group">
               <Globe size={14} className="text-orange-500" />
               <div className="flex flex-col">
@@ -114,7 +173,7 @@ function UserHeader({ isLicenseValid }: { isLicenseValid: boolean }) {
                 <span className="text-xs font-black text-slate-900 lowercase tracking-tight">{settings.subdomain}</span>
               </div>
             </div>
-          )}
+          ) : null}
        </div>
 
        <div className="flex items-center gap-6">
@@ -170,8 +229,7 @@ function Sidebar() {
   const t = translations[language];
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  const menuItems = [
+   const menuItems = [
     { icon: LayoutDashboard, label: t.dashboard, path: '/', id: 'dashboard', module: 'reports' },
     { icon: ShoppingCart, label: t.pos, path: '/pos', id: 'pos', module: 'pos' },
     { icon: Smartphone, label: t.mobile_money || 'Transactions Mobiles', path: '/mobile-money', id: 'mobile_money', module: 'pos' },
@@ -180,6 +238,7 @@ function Sidebar() {
     { icon: BarChart3, label: t.accounting, path: '/accounting', id: 'accounting', module: 'accounting' },
     { icon: Users, label: t.customers, path: '/clients', id: 'clients', module: 'clients' },
     { icon: UserCheck, label: t.personnel, path: '/personnel', id: 'personnel', module: 'personnel' },
+    { icon: MessageSquare, label: 'Messagerie', path: '/chat', id: 'chat', module: 'none' },
     { icon: SettingsIcon, label: t.settings, path: '/settings', id: 'settings', module: 'settings' },
   ];
 
@@ -189,6 +248,7 @@ function Sidebar() {
   }
 
   const filteredItems = menuItems.filter(item => {
+    if (item.id === 'chat') return true;
     const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com';
     if (isSuperAdmin) {
       if (item.id === 'super-admin' || item.id === 'settings') return true;
@@ -204,7 +264,7 @@ function Sidebar() {
     
     // Check specific module permission
     return hasPermission(item.module || item.id, 'read');
-  });
+  });;
 
   const handleLogout = () => signOut(auth);
 
@@ -251,7 +311,7 @@ function Sidebar() {
                       : 'text-gray-500 hover:text-white hover:bg-white/5'}
               `}
             >
-              <item.icon size={20} className={location.pathname === item.path && (item.id === 'settings' || item.id === 'dashboard' || item.id === 'pos' || item.id === 'inventory' || item.id === 'history' || item.id === 'accounting' || item.id === 'clients' || item.id === 'personnel' || item.id === 'mobile_money')  ? 'text-orange-500' : ''} />
+              <item.icon size={20} className={location.pathname === item.path ? 'text-orange-500' : ''} />
               <span className="text-sm tracking-wide">{item.label}</span>
             </Link>
           ))}
@@ -411,6 +471,7 @@ function AppRoutes({
               <Route path="/personnel" element={hasAccess('personnel') ? <PageTransition><Personnel /></PageTransition> : <Navigate to="/" />} />
               <Route path="/clients" element={hasAccess('clients') ? <PageTransition><Clients /></PageTransition> : <Navigate to="/" />} />
               <Route path="/settings" element={hasAccess('settings') ? <PageTransition><Settings /></PageTransition> : <Navigate to="/" />} />
+              <Route path="/chat" element={<PageTransition><Chat /></PageTransition>} />
               <Route path="/super-admin" element={(auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com') ? <PageTransition><SuperAdmin /></PageTransition> : <Navigate to="/" />} />
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>

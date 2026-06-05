@@ -13,8 +13,8 @@ service cloud.firestore {
 
     function isBootstrapAdmin() {
       return isSignedIn() && 
-             (request.auth.token.get('email', '') == 'anges.gildas@gmail.com' ||
-              request.auth.token.get('email', '') == 'gildas@gmail.com');
+             (request.auth.token.email == 'anges.gildas@gmail.com' ||
+              request.auth.token.email == 'gildas@gmail.com');
     }
 
     function getUserData() {
@@ -126,6 +126,22 @@ service cloud.firestore {
     }
 
     // --- Validation Blueprints ---
+
+    function isValidChatMessage(data) {
+      return data.keys().hasAll(['storeId', 'senderId', 'senderName', 'senderEmail', 'senderRole', 'message', 'timestamp', 'type']) &&
+             data.storeId is string && data.storeId.size() <= 128 &&
+             data.senderId == request.auth.uid &&
+             data.senderName is string && data.senderName.size() <= 200 &&
+             data.senderEmail is string && data.senderEmail.size() <= 150 &&
+             data.senderRole in ['admin', 'manager', 'cashier', 'super-admin'] &&
+             data.message is string && data.message.size() <= 2000 &&
+             data.type in ['store', 'broadcast', 'direct'] &&
+             (!data.keys().hasAll(['recipientId']) || (data.recipientId is string && data.recipientId.size() <= 128)) &&
+             (!data.keys().hasAll(['attachmentName']) || (data.attachmentName is string && data.attachmentName.size() <= 256)) &&
+             (!data.keys().hasAll(['attachmentType']) || (data.attachmentType is string && data.attachmentType.size() <= 128)) &&
+             (!data.keys().hasAll(['attachmentSize']) || (data.attachmentSize is number)) &&
+             (!data.keys().hasAll(['attachmentData']) || (data.attachmentData is string && data.attachmentData.size() <= 1500000));
+    }
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'storeId', 'email', 'role']) &&
@@ -316,6 +332,49 @@ service cloud.firestore {
       allow create: if isSignedIn() && incoming().userId == request.auth.uid && isValidId(logId);
       allow update: if false;
       allow delete: if isBootstrapAdmin();
+    }
+
+    match /systemNotifications/{notificationId} {
+      allow read, list: if isBootstrapAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /chatMessages/{msgId} {
+      allow read, list: if isSignedIn() && (
+        isBootstrapAdmin() ||
+        resource.data.storeId == 'broadcast' ||
+        resource.data.type == 'broadcast' ||
+        (resource.data.type == 'direct' && (
+          resource.data.senderId == request.auth.uid ||
+          resource.data.recipientId == request.auth.uid
+        )) ||
+        (resource.data.storeId == userStoreId() && resource.data.type == 'store')
+      );
+      
+      allow create: if isSignedIn() && isValidChatMessage(incoming()) && isValidId(msgId) && (
+        isBootstrapAdmin() || (
+          incoming().type == 'direct' && (
+            incoming().senderId == request.auth.uid ||
+            incoming().recipientId == request.auth.uid
+          )
+        ) || (
+          incoming().storeId == userStoreId() &&
+          incoming().type == 'store'
+        )
+      ) && incoming().timestamp == request.time;
+      
+      allow update: if isBootstrapAdmin() || (
+        isSignedIn() && 
+        existing().senderId == request.auth.uid && 
+        incoming().senderId == existing().senderId && 
+        incoming().storeId == existing().storeId &&
+        incoming().message is string && incoming().message.size() <= 2000 &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['message', 'updatedAt'])
+      );
+      
+      allow delete: if isBootstrapAdmin() || (
+        isSignedIn() && existing().senderId == request.auth.uid
+      );
     }
   }
 }

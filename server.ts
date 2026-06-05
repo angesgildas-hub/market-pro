@@ -211,12 +211,36 @@ L'équipe Market Pro (No-Reply)`;
       return res.status(400).json({ error: "Type d'email inconnu" });
     }
 
+    // Helper to log system notification to Firestore as a resilient backup/journal audit
+    const logNotificationToFirestore = async (status: "sent" | "failed" | "mocked", errMessage?: string) => {
+      try {
+        const { default: fAdmin } = await import("firebase-admin");
+        if (fAdmin.apps.length === 0) {
+          fAdmin.initializeApp();
+        }
+        const db = fAdmin.firestore();
+        await db.collection("systemNotifications").add({
+          type: type || "unknown",
+          to: to || "unknown",
+          subject: subject || "No Subject",
+          body: text || html || "",
+          status: status,
+          errorDetails: errMessage || null,
+          timestamp: new Date()
+        });
+        console.log(`[Email Service] Logged notification to Firestore with status: ${status}`);
+      } catch (dbErr: any) {
+        console.warn(`[Email Service Warning] Failed to save copy to Firestore:`, dbErr.message);
+      }
+    };
+
     // Check if configuration exists
     if (!smtpUser || !smtpPass) {
       console.warn(`[Email Service Warning] SMTP credentials not set. Email not sent, logged to console:
 To: ${to}
 Subject: ${subject}
 Text: ${text}`);
+      await logNotificationToFirestore("mocked", "Variables d'environnement SMTP non configurées (Simulation d'envoi)");
       return res.json({ 
         success: true, 
         mocked: true, 
@@ -247,6 +271,7 @@ Text: ${text}`);
       });
 
       console.log(`[Email Service] Email sent successfully: ${info.messageId}`);
+      await logNotificationToFirestore("sent");
       return res.json({ success: true, messageId: info.messageId });
     } catch (err: any) {
       const isAuthError = err.code === 'EAUTH' || 
@@ -274,6 +299,7 @@ Pour corriger, mettez à jour vos variables d'environnement (SMTP_USER, SMTP_PAS
 ========================================================================
 `);
         
+        await logNotificationToFirestore("failed", `Authentication Failed (Gmail App Password Required): ${err.message}`);
         return res.status(200).json({ 
           success: false, 
           error: "SMTP Authentication Failed (Code 535 / EAUTH)", 
@@ -292,6 +318,7 @@ Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
 - Message : ${err.message}
 ========================================================================
 `);
+        await logNotificationToFirestore("failed", `Connection Error: ${err.message} (Code: ${err.code})`);
         return res.status(200).json({
           success: false,
           error: "SMTP Connection Failed",
@@ -301,6 +328,7 @@ Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
       }
 
       console.warn(`[Email Service Warning] Failed to send email to ${to}:`, err.message || err);
+      await logNotificationToFirestore("failed", `Unhandled error: ${err.message || String(err)}`);
       return res.status(200).json({ 
         success: false, 
         error: "Failed to send email", 

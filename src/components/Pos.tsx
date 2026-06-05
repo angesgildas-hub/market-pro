@@ -21,7 +21,7 @@ import {
   History
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { collection, addDoc, doc, updateDoc, onSnapshot, query, orderBy, serverTimestamp, runTransaction, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, doc, updateDoc, onSnapshot, query, orderBy, serverTimestamp, runTransaction, where, getDocs, setDoc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../services/db';
 import { Product, CartItem, PaymentMethod, StoreSettings, Client } from '../types';
@@ -324,17 +324,16 @@ export default function Pos() {
         throw new Error("ID de boutique manquant. Veuillez vous reconnecter.");
       }
       let saleId = '';
-      await runTransaction(db, async (transaction) => {
-        // ... (read products)
-        const productRefs = itemsToSave.map(item => doc(db, 'products', item.productId));
-        const productSnaps = await Promise.all(productRefs.map(ref => transaction.get(ref)));
+      const isOfflineMode = !navigator.onLine;
 
+      if (isOfflineMode) {
+        // --- OFFLINE/CACHE OPTIMIZED WRITE PATH ---
         const saleRef = doc(collection(db, 'sales'));
         saleId = saleRef.id;
         
         const saleData: any = {
           storeId: userProfile.storeId,
-          timestamp: serverTimestamp(),
+          timestamp: serverTimestamp(), // Firestore generates client-side estimates offline automatically
           cashierId: auth.currentUser?.uid,
           cashierName: userProfile?.displayName || auth.currentUser?.displayName || 'Admin',
           totalAmount: saleTotal,
@@ -342,7 +341,8 @@ export default function Pos() {
           amountReceived: saleAmountReceived,
           change: saleChange,
           paymentMethod,
-          itemsCount: itemsToSave.length
+          itemsCount: itemsToSave.length,
+          _isOfflineCreated: true
         };
 
         if (selectedClient) {
@@ -352,24 +352,35 @@ export default function Pos() {
             saleData.clientMatricule = selectedClient.matricule;
           }
           
-          // Update client stats
+          // Update client stats offline - uses cached values first
           const clientRef = doc(db, 'clients', selectedClient.id);
-          const clientSnap = await transaction.get(clientRef);
-          if (clientSnap.exists()) {
-            transaction.update(clientRef, {
-              totalSpent: (clientSnap.data().totalSpent || 0) + saleTotal,
-              visitsCount: (clientSnap.data().visitsCount || 0) + 1,
-              lastVisit: serverTimestamp(),
-            });
+          try {
+            const clientSnap = await getDoc(clientRef);
+            if (clientSnap.exists()) {
+              await updateDoc(clientRef, {
+                totalSpent: (clientSnap.data().totalSpent || 0) + saleTotal,
+                visitsCount: (clientSnap.data().visitsCount || 0) + 1,
+                lastVisit: serverTimestamp(),
+              });
+            } else {
+              await updateDoc(clientRef, {
+                totalSpent: saleTotal,
+                visitsCount: 1,
+                lastVisit: serverTimestamp(),
+              });
+            }
+          } catch (clientErr) {
+            console.warn("Client stats update postponed (offline mode):", clientErr);
           }
         }
 
-        transaction.set(saleRef, saleData);
+        // Set the sale document
+        await setDoc(saleRef, saleData);
 
-        // ... (save items)
-        itemsToSave.forEach((item, index) => {
+        // Save each item & adjust product inventory offline
+        await Promise.all(itemsToSave.map(async (item) => {
           const itemRef = doc(collection(db, `sales/${saleRef.id}/items`));
-          transaction.set(itemRef, {
+          await setDoc(itemRef, {
             storeId: userProfile.storeId,
             productId: item.productId,
             name: item.name,
@@ -378,12 +389,22 @@ export default function Pos() {
             total: item.total
           });
 
-          const productSnap = productSnaps[index];
-          if (productSnap.exists()) {
-            const newStock = (productSnap.data().stock || 0) - item.quantity;
-            transaction.update(productSnap.ref, { stock: newStock });
+          // Update stock status offline
+          const productRef = doc(db, 'products', item.productId);
+          try {
+            const productSnap = await getDoc(productRef);
+            if (productSnap.exists()) {
+              const newStock = (productSnap.data().stock || 0) - item.quantity;
+              await updateDoc(productRef, { stock: newStock });
+            } else {
+              await updateDoc(productRef, {
+                stock: (item.stock || 5) - item.quantity
+              });
+            }
+          } catch (prodErr) {
+            console.warn("Product stock update queued (offline mode):", prodErr);
           }
-        });
+        }));
 
         setLastSaleId(saleId);
         setLastSaleData({
@@ -398,7 +419,84 @@ export default function Pos() {
           clientPhone: selectedClient?.phone,
           clientMatricule: selectedClient?.matricule
         });
-      });
+
+      } else {
+        // --- ONLINE TRANSACTION SECURE LOCK PATH ---
+        await runTransaction(db, async (transaction) => {
+          const productRefs = itemsToSave.map(item => doc(db, 'products', item.productId));
+          const productSnaps = await Promise.all(productRefs.map(ref => transaction.get(ref)));
+
+          const saleRef = doc(collection(db, 'sales'));
+          saleId = saleRef.id;
+          
+          const saleData: any = {
+            storeId: userProfile.storeId,
+            timestamp: serverTimestamp(),
+            cashierId: auth.currentUser?.uid,
+            cashierName: userProfile?.displayName || auth.currentUser?.displayName || 'Admin',
+            totalAmount: saleTotal,
+            discount: saleDiscount,
+            amountReceived: saleAmountReceived,
+            change: saleChange,
+            paymentMethod,
+            itemsCount: itemsToSave.length
+          };
+
+          if (selectedClient) {
+            saleData.clientId = selectedClient.id;
+            saleData.clientName = selectedClient.name;
+            if (selectedClient.matricule) {
+              saleData.clientMatricule = selectedClient.matricule;
+            }
+            
+            // Update client stats
+            const clientRef = doc(db, 'clients', selectedClient.id);
+            const clientSnap = await transaction.get(clientRef);
+            if (clientSnap.exists()) {
+              transaction.update(clientRef, {
+                totalSpent: (clientSnap.data().totalSpent || 0) + saleTotal,
+                visitsCount: (clientSnap.data().visitsCount || 0) + 1,
+                lastVisit: serverTimestamp(),
+              });
+            }
+          }
+
+          transaction.set(saleRef, saleData);
+
+          // Save items & update stocks
+          itemsToSave.forEach((item, index) => {
+            const itemRef = doc(collection(db, `sales/${saleRef.id}/items`));
+            transaction.set(itemRef, {
+              storeId: userProfile.storeId,
+              productId: item.productId,
+              name: item.name,
+              quantity: item.quantity,
+              priceAtSale: item.priceAtSale,
+              total: item.total
+            });
+
+            const productSnap = productSnaps[index];
+            if (productSnap.exists()) {
+              const newStock = (productSnap.data().stock || 0) - item.quantity;
+              transaction.update(productSnap.ref, { stock: newStock });
+            }
+          });
+
+          setLastSaleId(saleId);
+          setLastSaleData({
+            items: itemsToSave,
+            total: saleTotal,
+            discount: saleDiscount,
+            amountReceived: saleAmountReceived,
+            change: saleChange,
+            id: saleId,
+            date: new Date(),
+            clientName: selectedClient?.name,
+            clientPhone: selectedClient?.phone,
+            clientMatricule: selectedClient?.matricule
+          });
+        });
+      }
 
       setCheckoutStep('receipt');
       setCart([]);

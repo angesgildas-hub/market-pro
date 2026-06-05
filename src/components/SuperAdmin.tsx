@@ -29,9 +29,12 @@ export default function SuperAdmin() {
   const [newStoreData, setNewStoreData] = useState({ name: '', adminEmail: '', address: '', phone: '' });
   const [systemConfig, setSystemConfig] = useState<any>(null);
   const [domainUrl, setDomainUrl] = useState('');
-  const [activeTab, setActiveTab] = useState<'stores' | 'users' | 'connections' | 'saas' | 'redirection'>('stores');
+  const [activeTab, setActiveTab] = useState<'stores' | 'users' | 'connections' | 'saas' | 'redirection' | 'emails'>('stores');
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [connectionLogs, setConnectionLogs] = useState<any[]>([]);
+  const [systemNotifications, setSystemNotifications] = useState<any[]>([]);
+  const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null);
+  const [emailSearchQuery, setEmailSearchQuery] = useState('');
   const [logsLimit, setLogsLimit] = useState<number>(100);
 
   // SaaS Integration states
@@ -46,6 +49,25 @@ export default function SuperAdmin() {
     status: 'success' | 'error';
     details: string;
   }>>([]);
+
+  // States for interactive Store Editing
+  const [editingStoreInfo, setEditingStoreInfo] = useState(false);
+  const [editedStoreName, setEditedStoreName] = useState('');
+  const [editedStorePhone, setEditedStorePhone] = useState('');
+  const [editedStoreAddress, setEditedStoreAddress] = useState('');
+  const [editedStoreParentId, setEditedStoreParentId] = useState('');
+
+  useEffect(() => {
+    if (selectedStore) {
+      setEditedStoreName(selectedStore.name || '');
+      setEditedStorePhone(selectedStore.phone || '');
+      setEditedStoreAddress(selectedStore.address || '');
+      setEditedStoreParentId((selectedStore as any).parentStoreId || '');
+      setEditingStoreInfo(false);
+    } else {
+      setEditingStoreInfo(false);
+    }
+  }, [selectedStore]);
 
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -102,8 +124,26 @@ export default function SuperAdmin() {
       console.warn("Unable to fetch connection histories, probably current user is not bootstrap admin or rules not deployed yet:", err);
     });
 
+    // Subscription for system SMTP and notifications logs
+    const notificationsQuery = query(
+      collection(db, 'systemNotifications'),
+      orderBy('timestamp', 'desc'),
+      limit(100)
+    );
+    const unsubNotifications = onSnapshot(notificationsQuery, (snap) => {
+      console.log("SuperAdmin: Fetched system notifications:", snap.size);
+      const list = snap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setSystemNotifications(list);
+    }, (err) => {
+      console.warn("Unable to fetch system notifications:", err);
+    });
+
     return () => {
       unsubConnections();
+      unsubNotifications();
     };
   }, [logsLimit]);
 
@@ -647,6 +687,36 @@ export default function SuperAdmin() {
     }
   };
 
+  const handleSaveStoreInfo = async () => {
+    if (!selectedStore) return;
+    try {
+      setLoading(true);
+      const storeRef = doc(db, 'storeSettings', selectedStore.id);
+      const updateData: any = {
+        name: editedStoreName,
+        phone: editedStorePhone,
+        address: editedStoreAddress,
+        parentStoreId: editedStoreParentId || null,
+        updatedAt: serverTimestamp()
+      };
+      await updateDoc(storeRef, updateData);
+      
+      // Update selectedStore in state to reflect change immediately
+      setSelectedStore(prev => prev ? {
+        ...prev,
+        ...updateData
+      } : null);
+      
+      setEditingStoreInfo(false);
+      showAlert("Informations de la boutique sauvegardées avec succès.", "success");
+    } catch (err: any) {
+      console.error("Error updating store info:", err);
+      showAlert("Erreur lors de la sauvegarde: " + err.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDeleteStore = async (storeId: string, storeName: string) => {
     // Only the main admin can delete
     if (auth.currentUser?.email !== 'anges.gildas@gmail.com' && auth.currentUser?.email !== 'gildas@gmail.com') {
@@ -1184,6 +1254,23 @@ export default function SuperAdmin() {
           <Globe size={14} />
           Redirection & Hébergement Hostinger
         </button>
+        <button
+          onClick={() => setActiveTab('emails')}
+          className={`px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all duration-300 flex items-center gap-2 relative ${
+            activeTab === 'emails'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-gray-400 hover:text-slate-900 hover:bg-gray-50'
+          }`}
+        >
+          <Mail size={14} />
+          Emailing & Diagnostics SMTP
+          {systemNotifications.filter(n => n.status === 'failed').length > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+            </span>
+          )}
+        </button>
       </div>
 
       {activeTab === 'stores' ? (
@@ -1231,7 +1318,14 @@ export default function SuperAdmin() {
                             )}
                           </div>
                           <div>
-                            <p className="font-black text-gray-900 text-sm tracking-tight">{store.name || 'Sans Nom'}</p>
+                            <p className="font-black text-gray-900 text-sm tracking-tight flex items-center gap-2">
+                              {store.name || 'Sans Nom'}
+                              {(store as any).parentStoreId ? (
+                                <span className="px-1.5 py-0.5 bg-indigo-50 border border-indigo-100 text-[8px] font-black uppercase text-indigo-500 rounded-md tracking-wider">Sous-Boutique</span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 bg-emerald-50 border border-emerald-100 text-[8px] font-black uppercase text-emerald-500 rounded-md tracking-wider">Principale</span>
+                              )}
+                            </p>
                             <p className="text-[10px] text-gray-400 font-mono">ID: {store.id}</p>
                           </div>
                         </div>
@@ -1831,7 +1925,7 @@ export default function SuperAdmin() {
             </div>
           </div>
         </div>
-      ) : (
+      ) : activeTab === 'redirection' ? (
         /* Redirection & Hostinger Helper Tab */
         <div className="bg-white rounded-[40px] p-8 border border-gray-100 shadow-xl shadow-gray-200/30 flex flex-col gap-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-50 pb-6">
@@ -2065,6 +2159,200 @@ RewriteRule ^(.*)$ https://ais-pre-6...run.app/$1 [L,R=301,NE,QSA]`}
             </div>
           </div>
         </div>
+      ) : (
+        /* Emails & SMTP Log Tab Panel */
+        <div className="bg-white rounded-[40px] p-8 border border-gray-100 shadow-xl shadow-gray-200/30 flex flex-col gap-8" id="emails-log-panel">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-50 pb-6" id="emails-panel-header">
+            <div>
+              <h2 className="text-xl font-black text-gray-900 tracking-tight uppercase italic flex items-center gap-2" id="emails-panel-title">
+                <Mail size={24} className="text-orange-500" id="emails-panel-icon" />
+                Journal des Emails & Diagnostics SMTP
+              </h2>
+              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1" id="emails-panel-subtitle">
+                Suivi en temps réel des envois de notifications système et alertes de livraison
+              </p>
+            </div>
+            
+            <div className="flex items-center gap-3" id="emails-panel-badge-container">
+              <span className="px-4 py-1.5 bg-slate-100 text-slate-700 rounded-full text-[10px] font-black uppercase tracking-widest" id="emails-count-badge">
+                {systemNotifications.length} Messages Loggués
+              </span>
+            </div>
+          </div>
+
+          {/* Quick Diagnostics Box */}
+          {systemNotifications.some(n => n.status === "failed") ? (
+            <div className="p-6 bg-red-50 rounded-3xl border border-red-200/60 text-red-900" id="emails-diagnostic-error-card">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-red-100 rounded-2xl text-red-600">
+                  <ShieldAlert size={24} />
+                </div>
+                <div className="space-y-2 flex-1">
+                  <h3 className="text-sm font-black uppercase tracking-wide">⚠️ Erreur d'Authentification SMTP détectée (Code d'authentification 535)</h3>
+                  <p className="text-xs leading-relaxed font-semibold text-red-700">
+                    Le serveur SMTP montre des échecs d'envoi d'emails. Cela se produit généralement lorsque vous utilisez un compte Gmail avec son mot de passe ordinaire. 
+                    <strong> Google exige une authentification forte par "Mot de passe d'application" (App Password)</strong> pour se connecter de manière externe.
+                  </p>
+                  <div className="pt-2">
+                    <p className="text-xs font-bold uppercase text-red-900 mb-1">💡 Solution étape par étape pour l'administrateur :</p>
+                    <ol className="list-decimal pl-5 text-[11px] text-red-800 font-medium space-y-1">
+                      <li>Rendez-vous sur la gestion de votre compte Google : <a href="https://myaccount.google.com" target="_blank" rel="noopener noreferrer" className="underline font-bold">https://myaccount.google.com</a></li>
+                      <li>Dans le menu <strong>"Sécurité"</strong>, activez la <strong>"Validation en 2 étapes"</strong> si ce n'est pas déjà fait.</li>
+                      <li>Recherchez et cliquez sur <strong>"Mots de passe d'application"</strong> (tout en bas de l'encart validation).</li>
+                      <li>Générez un mot de passe d'application en choisissant un nom personnalisé (ex: "Market Pro Togo").</li>
+                      <li>Copiez la clé de <strong>16 caractères</strong> (sans espaces) affichée par Google.</li>
+                      <li>Gérez vos Variables d'Environnement dans AI Studio : remplacez la valeur de <strong>SMTP_PASS</strong> par cette clé de 16 lettres, puis redémarrez l'application.</li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : systemNotifications.some(n => n.status === "sent") ? (
+            <div className="p-6 bg-emerald-50 rounded-3xl border border-emerald-200/60 text-emerald-950" id="emails-diagnostic-success-card">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-emerald-100 rounded-2xl text-emerald-600">
+                  <CheckCircle2 size={24} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wide">✅ SMTP Connecté & Livraison Opérationnelle</h3>
+                  <p className="text-xs leading-relaxed font-semibold text-emerald-700 mt-1">
+                    Tous les services de messagerie système transmettent correctement les données. Aucun avertissement de connexion SMTP n'est actif sur votre réseau.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="p-6 bg-amber-50 rounded-3xl border border-amber-200/60 text-amber-955" id="emails-diagnostic-empty-card">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-amber-100 rounded-2xl text-amber-600">
+                  <Activity size={24} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wide">ℹ️ En attente de notifications système</h3>
+                  <p className="text-xs leading-relaxed font-semibold text-amber-700 mt-1">
+                    Aucun email système n'a encore été envoyé ou configuré. Pour tester la connexion, enregistrez une boutique d'essai ou mettez à jour l'approbation d'une demande.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Search Bar for notifications */}
+          <div className="relative" id="emails-search-container">
+            <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            <input
+              type="text"
+              placeholder="Filtrer les messages par destinataire, sujet, type d'email..."
+              value={emailSearchQuery}
+              onChange={(e) => setEmailSearchQuery(e.target.value)}
+              className="w-full pl-14 pr-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-xs font-semibold placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-slate-900/5 focus:bg-white transition-all shadow-inner"
+              id="emails-search-input"
+            />
+          </div>
+
+          {/* Notifications Log List */}
+          <div className="space-y-4" id="emails-log-list">
+            {systemNotifications.filter(n => {
+              if (!emailSearchQuery) return true;
+              const q = emailSearchQuery.toLowerCase();
+              return (n.to || '').toLowerCase().includes(q) || 
+                     (n.subject || '').toLowerCase().includes(q) || 
+                     (n.type || '').toLowerCase().includes(q) || 
+                     (n.status || '').toLowerCase().includes(q);
+            }).length === 0 ? (
+              <div className="text-center py-12 p-8 border border-dashed border-gray-200 rounded-3xl" id="emails-logs-empty">
+                <Mail size={36} className="mx-auto text-gray-300 mb-2 animate-pulse" />
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Aucune notification correspondante</p>
+              </div>
+            ) : (
+              systemNotifications.filter(n => {
+                if (!emailSearchQuery) return true;
+                const q = emailSearchQuery.toLowerCase();
+                return (n.to || '').toLowerCase().includes(q) || 
+                       (n.subject || '').toLowerCase().includes(q) || 
+                       (n.type || '').toLowerCase().includes(q) || 
+                       (n.status || '').toLowerCase().includes(q);
+              }).map((notification) => {
+                const isExpanded = expandedEmailId === notification.id;
+                const hasError = notification.status === "failed";
+                const isMocked = notification.status === "mocked";
+                
+                return (
+                  <div key={notification.id} className={`p-6 rounded-3xl border transition-all ${
+                    hasError ? 'bg-red-50/20 border-red-100 hover:border-red-200' :
+                    isMocked ? 'bg-slate-50 border-gray-100 hover:border-gray-200' : 
+                    'bg-white border-gray-50 hover:border-gray-100 shadow-sm'
+                  }`} id={`email-card-${notification.id}`}>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`px-2.5 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider ${
+                            notification.type === 'store_requested' ? 'bg-amber-100 text-amber-700' :
+                            notification.type === 'store_approved' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-700'
+                          }`}>
+                            {notification.type === 'store_requested' ? 'Demande Reçue' :
+                             notification.type === 'store_approved' ? 'Boutique Approuvée' : notification.type}
+                          </span>
+                          
+                          <span className={`px-2.5 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 ${
+                            hasError ? 'bg-red-100 text-red-700' :
+                            isMocked ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'
+                          }`}>
+                            {hasError ? 'Échec Delivery' :
+                             isMocked ? 'Simulation' : 'Envoyé'}
+                          </span>
+
+                          <span className="text-[10px] text-gray-400 font-bold ml-auto font-mono">
+                            {notification.timestamp?.toDate ? new Date(notification.timestamp.toDate()).toLocaleString() : new Date(notification.timestamp).toLocaleString()}
+                          </span>
+                        </div>
+
+                        <h4 className="text-sm font-black text-slate-900 tracking-tight">{notification.subject}</h4>
+                        <p className="text-xs font-semibold text-slate-500">
+                          Pour : <span className="text-slate-900 font-bold">{notification.to}</span>
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => setExpandedEmailId(isExpanded ? null : notification.id)}
+                        className="px-4 py-2 bg-slate-50 border border-gray-100 text-slate-800 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-sm hover:bg-slate-900 hover:text-white transition-all active:scale-95"
+                        id={`email-inspect-btn-${notification.id}`}
+                      >
+                        {isExpanded ? 'Masquer' : 'Inspecter'}
+                      </button>
+                    </div>
+
+                    {/* SMTP Error Details Console Box */}
+                    {hasError && notification.errorDetails && (
+                      <div className="mt-4 p-4 bg-red-950 text-red-200 font-mono text-[10px] rounded-2xl border border-red-900/40 leading-relaxed overflow-x-auto w-full">
+                        <strong className="text-red-400 uppercase font-black tracking-wider block mb-1">Détails d'erreur Nodemailer/SMTP :</strong>
+                        {notification.errorDetails}
+                      </div>
+                    )}
+
+                    {/* Expanded Email Body Preview */}
+                    {isExpanded && (
+                      <div className="mt-4 p-5 bg-slate-50 rounded-2xl border border-gray-100 space-y-3">
+                        <span className="text-[9px] text-gray-400 uppercase font-black tracking-wider block">Corps du message transmis</span>
+                        
+                        {notification.body && notification.body.startsWith('<') ? (
+                          <div 
+                            className="bg-white p-4 border border-gray-200/60 rounded-xl max-h-[300px] overflow-y-auto text-xs prose prose-sm max-w-none"
+                            dangerouslySetInnerHTML={{ __html: notification.body }}
+                          />
+                        ) : (
+                          <pre className="p-4 bg-white border border-gray-200/60 rounded-xl text-[11px] font-mono whitespace-pre-wrap text-slate-600 max-h-[300px] overflow-y-auto leading-relaxed">
+                            {notification.body}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
       )}
 
       {/* Store Detail Modal */}
@@ -2109,21 +2397,128 @@ RewriteRule ^(.*)$ https://ais-pre-6...run.app/$1 [L,R=301,NE,QSA]`}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
                   <div className="lg:col-span-1 space-y-8">
                     <div>
-                      <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Informations</h3>
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-3 text-gray-600 font-bold text-sm">
-                          <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400">
-                             <Phone size={18} />
-                          </div>
-                          {selectedStore.phone || 'Non renseigné'}
-                        </div>
-                        <div className="flex items-center gap-3 text-gray-600 font-bold text-sm">
-                          <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400">
-                             <MapPin size={18} />
-                          </div>
-                          {selectedStore.address || 'Non renseignée'}
-                        </div>
+                      <div className="flex items-center justify-between border-b border-gray-100 pb-2 mb-4">
+                        <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Informations</h3>
+                        <button 
+                          onClick={() => {
+                            if (editingStoreInfo) {
+                              setEditingStoreInfo(false);
+                            } else {
+                              setEditedStoreName(selectedStore.name || '');
+                              setEditedStorePhone(selectedStore.phone || '');
+                              setEditedStoreAddress(selectedStore.address || '');
+                              setEditedStoreParentId((selectedStore as any).parentStoreId || '');
+                              setEditingStoreInfo(true);
+                            }
+                          }}
+                          className="text-[10px] font-black text-orange-600 uppercase tracking-widest hover:underline"
+                        >
+                          {editingStoreInfo ? "Annuler" : "Modifier"}
+                        </button>
                       </div>
+
+                      {editingStoreInfo ? (
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Nom de Boutique</label>
+                            <input 
+                              type="text"
+                              value={editedStoreName}
+                              onChange={(e) => setEditedStoreName(e.target.value)}
+                              className="w-full text-xs px-3.5 py-2 bg-white border border-gray-200 rounded-xl font-bold outline-none font-sans text-gray-800"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Téléphone</label>
+                            <input 
+                              type="text"
+                              value={editedStorePhone}
+                              onChange={(e) => setEditedStorePhone(e.target.value)}
+                              className="w-full text-xs px-3.5 py-2 bg-white border border-gray-200 rounded-xl font-bold outline-none font-sans text-gray-800"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Adresse / Localisation</label>
+                            <input 
+                              type="text"
+                              value={editedStoreAddress}
+                              onChange={(e) => setEditedStoreAddress(e.target.value)}
+                              className="w-full text-xs px-3.5 py-2 bg-white border border-gray-200 rounded-xl font-bold outline-none font-sans text-gray-800"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Boutique Parent (Multi-Boutique)</label>
+                            <select
+                              value={editedStoreParentId}
+                              onChange={(e) => setEditedStoreParentId(e.target.value)}
+                              className="w-full text-xs px-3.5 py-2 bg-white border border-gray-200 rounded-xl font-bold outline-none font-sans text-gray-800"
+                            >
+                              <option value="">Aucune (Boutique Principale)</option>
+                              {stores.filter(s => s.id !== selectedStore.id).map(s => (
+                                <option key={`parent-store-select-${s.id}`} value={s.id}>{s.name || s.id}</option>
+                              ))}
+                            </select>
+                            <p className="text-[8px] text-gray-400 font-medium italic mt-1 leading-normal">
+                              Associer à un parent pour permettre à son administrateur de basculer et de gérer plusieurs sous-boutiques.
+                            </p>
+                          </div>
+                          <button 
+                            onClick={handleSaveStoreInfo}
+                            className="w-full py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all"
+                          >
+                            Enregistrer les modifications
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-3 text-gray-600 font-bold text-sm">
+                            <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400">
+                               <Store size={18} />
+                            </div>
+                            <div>
+                              <p className="text-[8px] font-black uppercase text-gray-400 block leading-none mb-0.5">Nom de Boutique</p>
+                              <p className="font-extrabold text-slate-800 text-xs">{selectedStore.name || 'Inconnu'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 text-gray-600 font-bold text-sm">
+                            <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400">
+                               <Phone size={18} />
+                            </div>
+                            <div>
+                              <p className="text-[8px] font-black uppercase text-gray-400 block leading-none mb-0.5">Téléphone</p>
+                              <p className="font-extrabold text-slate-800 text-xs">{selectedStore.phone || 'Non renseigné'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 text-gray-600 font-bold text-sm">
+                            <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400">
+                               <MapPin size={18} />
+                            </div>
+                            <div>
+                              <p className="text-[8px] font-black uppercase text-gray-400 block leading-none mb-0.5">Adresse</p>
+                              <p className="font-extrabold text-slate-800 text-xs">{selectedStore.address || 'Non renseignée'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 text-gray-600 font-bold text-sm">
+                            <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400">
+                               <Globe size={18} />
+                            </div>
+                            <div>
+                              <p className="text-[8px] font-black uppercase text-gray-400 block leading-none mb-0.5">Structure</p>
+                              <p className="font-extrabold text-xs">
+                                {(selectedStore as any).parentStoreId ? (
+                                  <span className="text-indigo-600">
+                                    Sous-boutique de: <span className="font-black underline">{stores.find(s => s.id === (selectedStore as any).parentStoreId)?.name || 'Boutique Principale'}</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-600 font-black">
+                                    Boutique Principale (Parent)
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div>

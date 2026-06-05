@@ -250,6 +250,17 @@ export default function MobileMoney() {
   const currentCountry = CEDEAO_COUNTRIES.find(c => c.code === selectedCountry) || CEDEAO_COUNTRIES[0];
   const operators = currentCountry.operators;
 
+  const displayedCountries = userProfile?.country
+    ? CEDEAO_COUNTRIES.filter(c => c.code === userProfile.country)
+    : CEDEAO_COUNTRIES;
+
+  // Auto select and lock first country based on logged-in user's profile country
+  useEffect(() => {
+    if (userProfile?.country) {
+      setSelectedCountry(userProfile.country);
+    }
+  }, [userProfile?.country]);
+
   // Auto select first operator when country or modal changes
   useEffect(() => {
     if (operators.length > 0 && !operators.some(op => op.id === formData.operator)) {
@@ -700,7 +711,7 @@ export default function MobileMoney() {
           Sélecteur de pays CEDEAO (Afrique de l'Ouest)
         </h3>
         <div className="flex flex-wrap gap-2.5">
-          {CEDEAO_COUNTRIES.map(country => {
+          {displayedCountries.map(country => {
             const isSelected = selectedCountry === country.code;
             const txCount = transactions.filter(t => t.countryCode === country.code).length;
             return (
@@ -1061,19 +1072,34 @@ export default function MobileMoney() {
                           {/* Merchant Number */}
                           <div className="space-y-1">
                             <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">N° Marchand / Puce / SIM</label>
-                            <input 
-                              type="text"
-                              placeholder="Ex: 771234567"
-                              value={adjustFormData.merchants[key] || ''}
-                              onChange={(e) => setAdjustFormData({
-                                ...adjustFormData,
-                                merchants: {
-                                  ...adjustFormData.merchants,
-                                  [key]: e.target.value
-                                }
-                              })}
-                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100 font-mono"
-                            />
+                            {(() => {
+                              const isNumFixed = !!merchantNumbers[key];
+                              return (
+                                <>
+                                  <input 
+                                    type="text"
+                                    placeholder="Ex: 771234567"
+                                    value={adjustFormData.merchants[key] || ''}
+                                    readOnly={isNumFixed}
+                                    onChange={(e) => !isNumFixed && setAdjustFormData({
+                                      ...adjustFormData,
+                                      merchants: {
+                                        ...adjustFormData.merchants,
+                                        [key]: e.target.value
+                                      }
+                                    })}
+                                    className={`w-full px-3 py-2 border rounded-xl text-xs font-bold outline-none font-mono ${
+                                      isNumFixed 
+                                        ? 'bg-slate-100 text-slate-500 cursor-not-allowed border-slate-200' 
+                                        : 'bg-white border-slate-200 focus:border-orange-500 focus:ring-2 focus:ring-orange-100 text-slate-900'
+                                    }`}
+                                  />
+                                  {isNumFixed && (
+                                    <p className="text-[8px] text-orange-500 font-medium italic mt-0.5">● Fixé par le système lors de l'inscription</p>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                       </div>

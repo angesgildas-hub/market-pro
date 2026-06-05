@@ -253,6 +253,39 @@
         "userAgent": { "type": "string" },
         "status": { "type": "string" }
       }
+    },
+    "SystemNotification": {
+      "title": "System Notification",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string" },
+        "to": { "type": "string" },
+        "body": { "type": "string" },
+        "status": { "type": "string", "enum": ["sent", "failed", "mocked"] },
+        "errorDetails": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["to", "subject", "body", "status", "timestamp"]
+    },
+    "ChatMessage": {
+      "title": "Chat Message",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string", "description": "ID of the store, or 'broadcast' for global messages" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderEmail": { "type": "string" },
+        "senderRole": { "type": "string", "enum": ["admin", "manager", "cashier", "super-admin"] },
+        "message": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "type": { "type": "string", "enum": ["store", "broadcast", "direct"] },
+        "recipientId": { "type": "string" },
+        "attachmentName": { "type": "string" },
+        "attachmentType": { "type": "string" },
+        "attachmentSize": { "type": "integer" },
+        "attachmentData": { "type": "string" }
+      },
+      "required": ["storeId", "senderId", "senderName", "senderEmail", "senderRole", "message", "timestamp", "type"]
     }
   },
   "firestore": {
@@ -319,6 +352,14 @@
     "/connectionHistory/{logId}": {
       "schema": "ConnectionHistoryLog",
       "description": "User login and connection history for all subscriber stores tracked by central system."
+    },
+    "/systemNotifications/{notificationId}": {
+      "schema": "SystemNotification",
+      "description": "System-wide tracking for email notifications, alerts and SMTP diagnostics."
+    },
+    "/chatMessages/{msgId}": {
+      "schema": "ChatMessage",
+      "description": "Real-time communication messages within local stores or system broadcasts."
     }
   }
 }

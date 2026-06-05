@@ -170,6 +170,31 @@ export default function Register() {
 
       const storeId = result.user.uid;
 
+      // Map registration operator numbers to mobileMoneySettings format
+      const mappedMerchantNumbers: Record<string, string> = {};
+      if (formData.operatorNumbers) {
+        Object.entries(formData.operatorNumbers).forEach(([key, val]) => {
+          const value = typeof val === 'string' ? val : '';
+          if (value && value.trim() !== '') {
+            const lastUnderscoreIndex = key.lastIndexOf('_');
+            if (lastUnderscoreIndex !== -1) {
+              const operatorPart = key.substring(0, lastUnderscoreIndex);
+              const rootKey = `${formData.country}_${operatorPart}`;
+              mappedMerchantNumbers[rootKey] = value.trim();
+            } else {
+              const rootKey = `${formData.country}_${key}`;
+              mappedMerchantNumbers[rootKey] = value.trim();
+            }
+          }
+        });
+      }
+
+      await setDoc(doc(db, 'mobileMoneySettings', storeId), {
+        selectedCountry: formData.country,
+        merchantNumbers: mappedMerchantNumbers,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
       // 2. Create Store Settings
       await setDoc(doc(db, 'storeSettings', storeId), {
         id: storeId,

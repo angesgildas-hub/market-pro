@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { initializeFirestore, doc, getDocFromServer, enableMultiTabIndexedDbPersistence, enableIndexedDbPersistence } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export const config = firebaseConfig;
@@ -13,6 +13,20 @@ export const db = initializeFirestore(app, {
 }, firebaseConfig.firestoreDatabaseId);
 
 export const auth = getAuth();
+
+// Enable offline persistence
+enableMultiTabIndexedDbPersistence(db)
+  .catch((err) => {
+    if (err.code === 'failed-precondition') {
+      console.warn('Firestore multi-tab persistence failed (multiple tabs open), falling back...');
+    } else {
+      console.warn('Firestore multi-tab persistence failed:', err.code);
+      // Try single-tab persistence fallback
+      enableIndexedDbPersistence(db).catch((singleErr) => {
+        console.error('Firestore single-tab persistence also failed:', singleErr.code);
+      });
+    }
+  });
 
 // Validate Connection
 async function testConnection() {
