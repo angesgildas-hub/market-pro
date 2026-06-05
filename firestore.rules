@@ -180,6 +180,15 @@ service cloud.firestore {
       allow write: if canCreate('inventory') && belongsToStore(incoming()) && incoming().name is string && incoming().name.size() <= 100 && isValidId(categoryId);
     }
 
+    function isValidCommande(data) {
+      return data.keys().hasAll(['storeId', 'timestamp', 'createdBy', 'totalAmount', 'status', 'number']) &&
+             data.storeId is string &&
+             data.createdBy is string &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.status in ['pending', 'served', 'completed', 'cancelled'] &&
+             data.number is string;
+    }
+
     function isValidSale(data) {
       return data.keys().hasAll(['storeId', 'timestamp', 'cashierId', 'totalAmount', 'paymentMethod']) &&
              data.storeId is string &&
@@ -375,6 +384,13 @@ service cloud.firestore {
       allow delete: if isBootstrapAdmin() || (
         isSignedIn() && existing().senderId == request.auth.uid
       );
+    }
+
+    match /commandes/{commandeId} {
+      allow read, list: if (canRead('pos') || canRead('sales')) && belongsToStore(resource.data || existing());
+      allow create: if canCreate('pos') && isValidCommande(incoming()) && belongsToStore(incoming()) && isValidId(commandeId);
+      allow update: if canUpdate('pos') && belongsToStore(existing()) && incoming().storeId == existing().storeId;
+      allow delete: if canDelete('pos') && belongsToStore(existing());
     }
   }
 }

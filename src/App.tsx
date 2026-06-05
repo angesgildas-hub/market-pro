@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate,
 import { 
   LayoutDashboard, 
   ShoppingCart, 
+  ClipboardList,
   Package, 
   BarChart3, 
   Settings as SettingsIcon, 
@@ -22,7 +23,14 @@ import {
   Lock,
   Smartphone,
   Store,
-  MessageSquare
+  MessageSquare,
+  Bell,
+  BellRing,
+  Calendar,
+  AlertTriangle,
+  Trash2,
+  CheckCheck,
+  Check
 } from 'lucide-react';
 import { onSnapshot, collection, doc, getDoc, setDoc, updateDoc, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
@@ -41,9 +49,10 @@ import Login from './components/Login';
 import LandingPage from './components/LandingPage';
 import Register from './components/Register';
 import MobileMoney from './components/MobileMoney';
+import Commandes from './components/Commandes';
 import Chat from './components/Chat';
 import { translations, Language } from './lib/translations';
-import { UserRole, StoreSettings, Client, UserProfile } from './types';
+import { UserRole, StoreSettings, Client, UserProfile, Product } from './types';
 
 // Simple Context for Global Settings
 export type Theme = 'default' | 'light-blue' | 'black' | 'dark-blue' | 'white' | 'dark-gray';
@@ -72,6 +81,31 @@ function UserHeader({ isLicenseValid }: { isLicenseValid: boolean }) {
   const user = auth.currentUser;
   const [time, setTime] = useState(new Date());
   const [familyStores, setFamilyStores] = useState<StoreSettings[]>([]);
+
+  // Notification States
+  const [productsList, setProductsList] = useState<Product[]>([]);
+  const [chatMessagesList, setChatMessagesList] = useState<any[]>([]);
+  const [leavesList, setLeavesList] = useState<any[]>([]);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [activeNotificationTab, setActiveNotificationTab] = useState<'all' | 'alerts' | 'messages'>('all');
+  
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem(`read-notifications-${userProfile?.storeId || 'common'}`);
+      return cached ? JSON.parse(cached) : [];
+    } catch (_) {
+      return [];
+    }
+  });
+  
+  const [lastChatReadTime, setLastChatReadTime] = useState<number>(() => {
+    try {
+      const val = localStorage.getItem(`last-chat-read-${userProfile?.storeId || 'common'}`);
+      return val ? parseInt(val, 10) : 0;
+    } catch (_) {
+      return 0;
+    }
+  });
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -106,6 +140,232 @@ function UserHeader({ isLicenseValid }: { isLicenseValid: boolean }) {
     return () => unsubscribe();
   }, [userProfile?.storeId, settings?.parentStoreId, settings?.id]);
 
+  // Synchroniser les produits pour calculer les ruptures et péremptions
+  useEffect(() => {
+    if (!user || !userProfile?.storeId) return;
+    const q = query(collection(db, 'products'), where('storeId', '==', userProfile.storeId));
+    const unsub = onSnapshot(q, (snap) => {
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
+      setProductsList(items);
+    }, (err) => {
+      console.warn("UserHeader products subscription failed:", err);
+    });
+    return () => unsub();
+  }, [user, userProfile?.storeId]);
+
+  // Synchroniser les demandes de congés pour les admins/managers
+  useEffect(() => {
+    if (!user || !userProfile?.storeId || userRole === 'cashier') return;
+    const q = query(collection(db, 'leaves'), where('storeId', '==', userProfile.storeId));
+    const unsub = onSnapshot(q, (snap) => {
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setLeavesList(items);
+    }, (err) => {
+      console.warn("UserHeader leaves subscription failed:", err);
+    });
+    return () => unsub();
+  }, [user, userProfile?.storeId, userRole]);
+
+  // Synchroniser les messages de clavardage pour détecter les nouveaux messages
+  useEffect(() => {
+    if (!user || !userProfile?.storeId) return;
+    const unsubscribes: (() => void)[] = [];
+    const storeIdToUse = userProfile.storeId;
+    
+    // Store message alerts map to combine them
+    let combinedMsgs: Record<string, any> = {};
+
+    const handleMessageUpdate = (type: string, msgs: any[]) => {
+      msgs.forEach(m => {
+        combinedMsgs[m.id] = m;
+      });
+      setChatMessagesList(Object.values(combinedMsgs));
+    };
+
+    // 1. Broadcast announcements
+    const q1 = query(collection(db, 'chatMessages'), where('type', '==', 'broadcast'));
+    unsubscribes.push(onSnapshot(q1, (snap) => {
+      const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      handleMessageUpdate('broadcast', msgs);
+    }, (err) => {
+      console.warn("Header messages Q1 failed:", err);
+    }));
+
+    // 2. Active Store discussion channel
+    const q2 = query(collection(db, 'chatMessages'), where('storeId', '==', storeIdToUse), where('type', '==', 'store'));
+    unsubscribes.push(onSnapshot(q2, (snap) => {
+      const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      handleMessageUpdate('store', msgs);
+    }, (err) => {
+      console.warn("Header messages Q2 failed:", err);
+    }));
+
+    // 3. Direct Messages received
+    const q4 = query(collection(db, 'chatMessages'), where('type', '==', 'direct'), where('recipientId', '==', user.uid));
+    unsubscribes.push(onSnapshot(q4, (snap) => {
+      const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      handleMessageUpdate('direct_received', msgs);
+    }, (err) => {
+      console.warn("Header messages Q4 failed:", err);
+    }));
+
+    return () => {
+      unsubscribes.forEach(u => u());
+    };
+  }, [user, userProfile?.storeId]);
+
+  // Generer les notifications dynamiquement
+  const notifications: any[] = [];
+  const nowDate = new Date();
+
+  // 1. Alerte Licence expirée / inactive
+  if (!isLicenseValid && userRole === 'admin') {
+    notifications.push({
+      id: 'license-alert',
+      type: 'license',
+      title: 'Alerte Système',
+      description: 'La licence de votre boutique est expirée ou inactive.',
+      timestamp: nowDate,
+      read: readNotificationIds.includes('license-alert'),
+      link: '/settings?tab=license'
+    });
+  }
+
+  // 2. Congés en attente (Admin ou Manager)
+  if (userRole !== 'cashier') {
+    leavesList.filter(l => l.status === 'pending').forEach(l => {
+      notifications.push({
+        id: `leave-${l.id}`,
+        type: 'leave',
+        title: 'Demande de Congé',
+        description: `${l.employeeName} a déposé une demande de congé (${l.type}).`,
+        timestamp: l.createdAt ? new Date(l.createdAt) : nowDate,
+        read: readNotificationIds.includes(`leave-${l.id}`),
+        link: '/personnel'
+      });
+    });
+  }
+
+  // 3. Ruptures de Stock
+  if (userRole !== 'cashier') {
+    productsList.filter(p => p.stock <= (p.lowStockThreshold || 5)).forEach(p => {
+      notifications.push({
+        id: `stock-${p.id}`,
+        type: 'stock',
+        title: 'Stock Critique',
+        description: `Le produit "${p.name}" est en rupture ou presque (Reste ${p.stock} ${p.unit}).`,
+        timestamp: p.updatedAt ? new Date(p.updatedAt) : nowDate,
+        read: readNotificationIds.includes(`stock-${p.id}`),
+        link: '/inventory'
+      });
+    });
+  }
+
+  // 4. Expiration proche des produits (peremption)
+  if (userRole !== 'cashier') {
+    productsList.filter(p => {
+      if (!p.expiryDate) return false;
+      const exp = new Date(p.expiryDate);
+      const diff = exp.getTime() - nowDate.getTime();
+      const diffDays = Math.ceil(diff / (1000 * 60 * 60 * 24));
+      return diffDays <= 14;
+    }).forEach(p => {
+      const exp = new Date(p.expiryDate!);
+      const expired = exp < nowDate;
+      notifications.push({
+        id: `expiry-${p.id}`,
+        type: 'expiry',
+        title: expired ? 'Produit Expiré' : 'Péremption Imminente',
+        description: expired 
+          ? `Le produit "${p.name}" a expiré le ${exp.toLocaleDateString('fr-FR')}.`
+          : `Le produit "${p.name}" expire le ${exp.toLocaleDateString('fr-FR')}.`,
+        timestamp: exp,
+        read: readNotificationIds.includes(`expiry-${p.id}`),
+        link: '/inventory'
+      });
+    });
+  }
+
+  // 5. Nouveaux messages chat non lus
+  chatMessagesList.filter(m => {
+    if (m.senderId === user?.uid) return false;
+    const mTime = m.timestamp?.toDate ? m.timestamp.toDate().getTime() : (m.timestamp ? new Date(m.timestamp).getTime() : 0);
+    return mTime > lastChatReadTime;
+  }).forEach(m => {
+    const mTime = m.timestamp?.toDate ? m.timestamp.toDate() : (m.timestamp ? new Date(m.timestamp) : nowDate);
+    notifications.push({
+      id: `chat-${m.id}`,
+      type: 'message',
+      title: m.type === 'broadcast' ? 'Annonce Système' : m.type === 'direct' ? 'Message Privé' : 'Message Équipe',
+      description: `${m.senderName} : ${m.message}`,
+      timestamp: mTime,
+      read: readNotificationIds.includes(`chat-${m.id}`),
+      link: '/chat'
+    });
+  });
+
+  // Trier les notifications par date décroissante
+  notifications.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+  // Filtrer les lues par onglet
+  const filteredNotifications = notifications.filter(n => {
+    if (activeNotificationTab === 'all') return true;
+    if (activeNotificationTab === 'alerts') return ['license', 'leave', 'stock', 'expiry'].includes(n.type);
+    if (activeNotificationTab === 'messages') return n.type === 'message';
+    return true;
+  });
+
+  const unreadNotifications = notifications.filter(n => !n.read);
+  const unreadCount = unreadNotifications.length;
+
+  const markAllAsRead = () => {
+    // 1. Lire tous les messages
+    const nowTime = Date.now();
+    setLastChatReadTime(nowTime);
+    localStorage.setItem(`last-chat-read-${userProfile?.storeId || 'common'}`, nowTime.toString());
+
+    // 2. Ajouter tous les autres ID à readNotificationIds
+    const newReadIds = [...readNotificationIds];
+    notifications.forEach(n => {
+      if (n.type !== 'message' && !newReadIds.includes(n.id)) {
+        newReadIds.push(n.id);
+      }
+    });
+    setReadNotificationIds(newReadIds);
+    localStorage.setItem(`read-notifications-${userProfile?.storeId || 'common'}`, JSON.stringify(newReadIds));
+  };
+
+  const handleNotificationClick = (noti: any) => {
+    if (noti.type === 'message') {
+      const nowTime = Date.now();
+      setLastChatReadTime(nowTime);
+      localStorage.setItem(`last-chat-read-${userProfile?.storeId || 'common'}`, nowTime.toString());
+    } else {
+      if (!readNotificationIds.includes(noti.id)) {
+        const newReadIds = [...readNotificationIds, noti.id];
+        setReadNotificationIds(newReadIds);
+        localStorage.setItem(`read-notifications-${userProfile?.storeId || 'common'}`, JSON.stringify(newReadIds));
+      }
+    }
+    setIsDropdownOpen(false);
+  };
+
+  const formatTimeDifference = (date: Date) => {
+    const diffMs = nowDate.getTime() - date.getTime();
+    if (diffMs < 0) {
+      const diffDays = Math.ceil(Math.abs(diffMs) / (1000 * 60 * 60 * 24));
+      if (diffDays === 1) return "Périme demain";
+      return `Périme dans ${diffDays} j.`;
+    }
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    if (diffMins < 1) return "À l'instant";
+    if (diffMins < 60) return `Il y a ${diffMins} min`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `Il y a ${diffHours} h`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `Il y a ${diffDays} j`;
+  };
+
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('fr-FR', { 
       weekday: 'long', 
@@ -123,7 +383,7 @@ function UserHeader({ isLicenseValid }: { isLicenseValid: boolean }) {
   };
 
   return (
-    <header className="fixed top-0 right-0 left-0 lg:left-64 h-24 bg-white/80 backdrop-blur-md z-30 px-6 lg:px-12 flex items-center justify-between border-b border-gray-100 print:hidden pl-20 lg:pl-12">
+    <header className="fixed top-0 right-0 left-0 lg:left-64 h-20 lg:h-24 bg-white/80 backdrop-blur-md z-30 px-4 sm:px-6 lg:px-12 flex items-center justify-between border-b border-gray-100 print:hidden pl-20 lg:pl-12">
        <div className="flex-1 max-w-sm mr-8">
           <div className="relative group">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-orange-500 transition-colors" size={18} />
@@ -177,18 +437,134 @@ function UserHeader({ isLicenseValid }: { isLicenseValid: boolean }) {
        </div>
 
        <div className="flex items-center gap-6">
-          {lowStockCount > 0 && userRole !== 'cashier' && (
-            <Link 
-              to="/inventory" 
-              className="relative p-2.5 bg-orange-50 text-orange-600 rounded-xl hover:bg-orange-100 transition-colors group"
-              title={`${lowStockCount} produits en stock critique`}
-            >
-              <Package size={20} className="group-hover:scale-110 transition-transform" />
-              <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-white animate-bounce">
-                {lowStockCount}
-              </span>
-            </Link>
-          )}
+          {/* SYSTEM UNIFIED NOTIFICATION BELL */}
+          <div className="relative">
+              <button 
+                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                className={`relative p-2.5 rounded-xl transition-all duration-200 group flex items-center justify-center active:scale-95 ${unreadCount > 0 ? 'bg-orange-50 text-orange-600 ring-2 ring-orange-500/10' : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}
+                title="Notifications"
+                id="notification-bell-btn"
+              >
+                {unreadCount > 0 ? (
+                  <BellRing size={20} className="animate-pulse group-hover:scale-110 transition-transform text-orange-500" />
+                ) : (
+                  <Bell size={20} className="group-hover:scale-110 transition-transform" />
+                )}
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-white animate-bounce shadow-md">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* OUTSIDE HANDLER OVERLAY */}
+              {isDropdownOpen && (
+                <div 
+                  className="fixed inset-0 z-40 bg-transparent" 
+                  onClick={() => setIsDropdownOpen(false)}
+                />
+              )}
+
+              {/* DROPDOWN FRAME */}
+              <AnimatePresence>
+                {isDropdownOpen && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute right-0 mt-3 w-80 md:w-96 bg-white rounded-3xl shadow-2xl border border-gray-100 p-4 z-50 overflow-hidden font-sans origin-top-right"
+                    id="notification-dropdown-panel"
+                  >
+                    {/* Header bar */}
+                    <div className="flex items-center justify-between pb-3 border-b border-gray-50">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-slate-900 text-sm">Notifications</span>
+                        {unreadCount > 0 && (
+                          <span className="text-[10px] font-bold bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full">
+                            {unreadCount} active(s)
+                          </span>
+                        )}
+                      </div>
+                      {unreadCount > 0 && (
+                        <button 
+                          onClick={markAllAsRead}
+                          className="text-[10px] text-orange-500 hover:text-orange-600 font-extrabold flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                        >
+                          <CheckCheck size={12} />
+                          Tout marquer lu
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Quick navigation and filtering tabs */}
+                    <div className="flex gap-1.5 py-2.5">
+                      <button
+                        onClick={() => setActiveNotificationTab('all')}
+                        className={`px-3 py-1.5 rounded-xl text-[10px] font-black tracking-wide uppercase transition-all cursor-pointer ${activeNotificationTab === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
+                      >
+                        Toutes
+                      </button>
+                      <button
+                        onClick={() => setActiveNotificationTab('alerts')}
+                        className={`px-3 py-1.5 rounded-xl text-[10px] font-black tracking-wide uppercase transition-all cursor-pointer ${activeNotificationTab === 'alerts' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
+                      >
+                        Alertes
+                      </button>
+                      <button
+                        onClick={() => setActiveNotificationTab('messages')}
+                        className={`px-3 py-1.5 rounded-xl text-[10px] font-black tracking-wide uppercase transition-all cursor-pointer ${activeNotificationTab === 'messages' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
+                      >
+                        Messages
+                      </button>
+                    </div>
+
+                    {/* Scrollable notifications frame */}
+                    <div className="max-h-[350px] overflow-y-auto pr-1 space-y-1.5 scrollbar-none">
+                      {filteredNotifications.length === 0 ? (
+                        <div className="py-12 flex flex-col items-center justify-center text-center">
+                          <div className="p-4 bg-slate-50 text-slate-300 rounded-[30px] mb-3">
+                            <Bell size={28} />
+                          </div>
+                          <p className="text-xs text-slate-400 font-bold">Aucune notification disponible.</p>
+                        </div>
+                      ) : (
+                        filteredNotifications.map((noti) => (
+                          <Link
+                            key={noti.id}
+                            to={noti.link}
+                            onClick={() => handleNotificationClick(noti)}
+                            className={`flex items-start gap-3 p-3 rounded-2xl transition-all duration-200 border-2 cursor-pointer ${noti.read ? 'bg-white hover:bg-slate-50 border-transparent opacity-60' : 'bg-orange-50/20 hover:bg-orange-50/40 border-orange-500/10'}`}
+                          >
+                            <div className={`p-2.5 rounded-xl shrink-0 ${
+                              noti.type === 'stock' ? 'bg-red-50 text-red-500' :
+                              noti.type === 'expiry' ? 'bg-amber-50 text-amber-500' :
+                              noti.type === 'message' ? 'bg-sky-50 text-sky-500' :
+                              noti.type === 'leave' ? 'bg-purple-50 text-purple-600' :
+                              'bg-rose-50 text-rose-500'
+                            }`}>
+                              {noti.type === 'stock' ? <Package size={16} /> :
+                               noti.type === 'expiry' ? <Calendar size={16} /> :
+                               noti.type === 'message' ? <MessageSquare size={16} /> :
+                               noti.type === 'leave' ? <UserCheck size={16} /> :
+                               <ShieldAlert size={16} />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[11px] font-black text-slate-800 uppercase tracking-wide truncate">{noti.title}</span>
+                                <span className="text-[8px] font-mono text-slate-400 shrink-0">{formatTimeDifference(noti.timestamp)}</span>
+                              </div>
+                              <p className="text-[10px] text-slate-600 leading-normal mt-0.5 line-clamp-2">{noti.description}</p>
+                            </div>
+                          </Link>
+                        ))
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+          </div>
+
           {!isLicenseValid && userRole === 'admin' && (
             <Link 
               to="/settings" 
@@ -199,6 +575,7 @@ function UserHeader({ isLicenseValid }: { isLicenseValid: boolean }) {
               <span className="text-[10px] font-black uppercase tracking-widest">Licence Inactive</span>
             </Link>
           )}
+
           <div className="text-right hidden md:block">
              <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1">{formatDate(time)}</p>
              <p className="text-lg font-mono font-black text-gray-900 leading-none">{formatTime(time)}</p>
@@ -232,6 +609,7 @@ function Sidebar() {
    const menuItems = [
     { icon: LayoutDashboard, label: t.dashboard, path: '/', id: 'dashboard', module: 'reports' },
     { icon: ShoppingCart, label: t.pos, path: '/pos', id: 'pos', module: 'pos' },
+    { icon: ClipboardList, label: t.orders || 'Commandes', path: '/commandes', id: 'commandes', module: 'pos' },
     { icon: Smartphone, label: t.mobile_money || 'Transactions Mobiles', path: '/mobile-money', id: 'mobile_money', module: 'pos' },
     { icon: Package, label: t.inventory, path: '/inventory', id: 'inventory', module: 'inventory' },
     { icon: History, label: t.history, path: '/history', id: 'history', module: 'pos' },
@@ -459,11 +837,12 @@ function AppRoutes({
       <Sidebar />
       <div className="flex-1 lg:ml-64 flex flex-col">
         <UserHeader isLicenseValid={isLicenseValid} />
-        <main className="flex-1 p-6 lg:p-12 pt-32 lg:pt-36">
+        <main className="flex-1 p-4 sm:p-6 lg:p-12 pt-28 lg:pt-36">
           <AnimatePresence mode="wait">
             <Routes location={location}>
               <Route path="/" element={<PageTransition><Dashboard /></PageTransition>} />
               <Route path="/pos" element={hasAccess('pos') ? <PageTransition><Pos /></PageTransition> : <Navigate to="/" />} />
+              <Route path="/commandes" element={hasAccess('pos') ? <PageTransition><Commandes /></PageTransition> : <Navigate to="/" />} />
               <Route path="/inventory" element={hasAccess('inventory') ? <PageTransition><Inventory /></PageTransition> : <Navigate to="/" />} />
               <Route path="/sales" element={hasAccess('sales') ? <PageTransition><SalesHistory /></PageTransition> : <Navigate to="/" />} />
               <Route path="/accounting" element={hasAccess('accounting') ? <PageTransition><Accounting /></PageTransition> : <Navigate to="/" />} />

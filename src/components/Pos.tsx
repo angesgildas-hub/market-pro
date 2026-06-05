@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, 
   ShoppingCart, 
+  ClipboardList,
   Trash2, 
   Plus, 
   Minus, 
@@ -59,6 +60,32 @@ export default function Pos() {
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
   const [clientSearch, setClientSearch] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [loadedOrderId, setLoadedOrderId] = useState<string | null>(null);
+  const [loadedOrderNumber, setLoadedOrderNumber] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const activePreload = localStorage.getItem('active-preloaded-order');
+      if (activePreload) {
+        const orderData = JSON.parse(activePreload);
+        if (orderData && orderData.items) {
+          setCart(orderData.items);
+          if (orderData.client) {
+            setSelectedClient(orderData.client);
+          }
+          if (orderData.id) {
+            setLoadedOrderId(orderData.id);
+          }
+          if (orderData.number) {
+            setLoadedOrderNumber(orderData.number);
+          }
+          localStorage.removeItem('active-preloaded-order');
+        }
+      }
+    } catch (e) {
+      console.error("Error reading preloaded order:", e);
+    }
+  }, []);
 
   useEffect(() => {
     if (!userProfile?.storeId) return;
@@ -377,6 +404,16 @@ export default function Pos() {
         // Set the sale document
         await setDoc(saleRef, saleData);
 
+        // Update preloaded order status
+        if (loadedOrderId) {
+          const orderRef = doc(db, 'commandes', loadedOrderId);
+          try {
+            await updateDoc(orderRef, { status: 'completed' });
+          } catch (e) {
+            console.warn("Could not mark order completed (offline mode):", e);
+          }
+        }
+
         // Save each item & adjust product inventory offline
         await Promise.all(itemsToSave.map(async (item) => {
           const itemRef = doc(collection(db, `sales/${saleRef.id}/items`));
@@ -463,6 +500,12 @@ export default function Pos() {
 
           transaction.set(saleRef, saleData);
 
+          // Update preloaded order status
+          if (loadedOrderId) {
+            const orderRef = doc(db, 'commandes', loadedOrderId);
+            transaction.update(orderRef, { status: 'completed' });
+          }
+
           // Save items & update stocks
           itemsToSave.forEach((item, index) => {
             const itemRef = doc(collection(db, `sales/${saleRef.id}/items`));
@@ -503,6 +546,8 @@ export default function Pos() {
       setDiscount(0);
       setAmountReceived(0);
       setSelectedClient(null);
+      setLoadedOrderId(null);
+      setLoadedOrderNumber(null);
     } catch (error) {
        handleFirestoreError(error, OperationType.WRITE, 'checkout');
     } finally {
@@ -644,6 +689,25 @@ export default function Pos() {
           </div>
           <p className="text-xs text-gray-400">{cart.length} articles sélectionnés</p>
         </div>
+
+        {loadedOrderNumber && (
+          <div className="bg-orange-500 text-white px-6 py-4.5 text-xs font-black flex items-center justify-between gap-3 border-b border-orange-600/20">
+            <span className="flex items-center gap-2">
+              <ClipboardList size={18} className="shrink-0 animate-bounce" />
+              <span>Commande en cours : <strong className="underline text-white font-black">{loadedOrderNumber}</strong></span>
+            </span>
+            <button 
+              onClick={() => {
+                setLoadedOrderId(null);
+                setLoadedOrderNumber(null);
+              }}
+              className="hover:bg-black/20 p-2 rounded-full transition-colors"
+              title="Détacher la commande"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         <div className="p-4 bg-gray-50 border-b border-gray-100">
            <div className="space-y-1">

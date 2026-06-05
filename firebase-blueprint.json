@@ -286,6 +286,25 @@
         "attachmentData": { "type": "string" }
       },
       "required": ["storeId", "senderId", "senderName", "senderEmail", "senderRole", "message", "timestamp", "type"]
+    },
+    "Commande": {
+      "title": "Commande",
+      "description": "An order taken to serve items first, then finalize at POS.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string", "description": "ID of the store this order belongs to" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string", "description": "Owner user UID" },
+        "createdByName": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "served", "completed", "cancelled"] },
+        "clientName": { "type": "string" },
+        "clientId": { "type": "string" },
+        "notes": { "type": "string" },
+        "number": { "type": "string" },
+        "items": { "type": "array", "description": "Array of ordered products" }
+      },
+      "required": ["storeId", "timestamp", "createdBy", "totalAmount", "status", "number"]
     }
   },
   "firestore": {
@@ -360,6 +379,10 @@
     "/chatMessages/{msgId}": {
       "schema": "ChatMessage",
       "description": "Real-time communication messages within local stores or system broadcasts."
+    },
+    "/commandes/{commandeId}": {
+      "schema": "Commande",
+      "description": "Orders draft and served status."
     }
   }
 }
