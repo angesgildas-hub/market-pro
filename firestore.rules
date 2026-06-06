@@ -218,7 +218,7 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isSignedIn() && (request.auth.uid == userId || (isAdmin() && existing().storeId == userStoreId()) || isBootstrapAdmin());
-      allow list: if isBootstrapAdmin() || (isSignedIn() && isAdmin() && resource.data.storeId == userStoreId());
+      allow list: if isBootstrapAdmin() || (isSignedIn() && resource.data.storeId == userStoreId());
       allow create: if isBootstrapAdmin() || 
                       (isSignedIn() && isAdmin() && incoming().storeId == userStoreId() && incoming().uid == userId && isValidUser(incoming())) || 
                       (isSignedIn() && request.auth.uid == userId && incoming().uid == userId && incoming().role == 'admin' && incoming().isActive == false);
@@ -314,7 +314,8 @@ service cloud.firestore {
     }
 
     match /mobileTransactions/{txId} {
-      allow read, list: if (canRead('pos') || canRead('accounting')) && belongsToStore(resource.data || existing());
+      allow read: if (canRead('pos') || canRead('accounting')) && belongsToStore(existing());
+      allow list: if (canRead('pos') || canRead('accounting')) && belongsToStore(resource.data);
       allow create: if canCreate('pos') && belongsToStore(incoming()) && isValidId(txId);
       allow update: if (canUpdate('pos') || isAdmin()) && belongsToStore(existing());
       allow delete: if canDelete('accounting') && belongsToStore(existing());
@@ -387,10 +388,11 @@ service cloud.firestore {
     }
 
     match /commandes/{commandeId} {
-      allow read, list: if (canRead('pos') || canRead('sales')) && belongsToStore(resource.data || existing());
-      allow create: if canCreate('pos') && isValidCommande(incoming()) && belongsToStore(incoming()) && isValidId(commandeId);
-      allow update: if canUpdate('pos') && belongsToStore(existing()) && incoming().storeId == existing().storeId;
-      allow delete: if canDelete('pos') && belongsToStore(existing());
+      allow read: if (canRead('pos') || canRead('sales')) && (isBootstrapAdmin() || (isSignedIn() && existing().storeId == userStoreId()));
+      allow list: if (canRead('pos') || canRead('sales')) && (isBootstrapAdmin() || (isSignedIn() && resource.data.storeId == userStoreId()));
+      allow create: if canCreate('pos') && isValidCommande(incoming()) && (isBootstrapAdmin() || (isSignedIn() && incoming().storeId == userStoreId())) && isValidId(commandeId);
+      allow update: if canUpdate('pos') && (isBootstrapAdmin() || (isSignedIn() && existing().storeId == userStoreId() && incoming().storeId == existing().storeId));
+      allow delete: if canDelete('pos') && (isBootstrapAdmin() || (isSignedIn() && existing().storeId == userStoreId()));
     }
   }
 }

@@ -228,7 +228,13 @@ export default function Chat() {
   // Read users
   useEffect(() => {
     if (!currentUser) return;
-    const q = query(collection(db, 'users'));
+    const storeIdToUse = userProfile?.storeId || settings?.id;
+    if (!isSuperAdmin && !storeIdToUse) return;
+
+    const q = isSuperAdmin
+      ? query(collection(db, 'users'))
+      : query(collection(db, 'users'), where('storeId', '==', storeIdToUse));
+
     const unsubscribe = onSnapshot(q, (snap) => {
       const list = snap.docs.map(doc => {
         const data = doc.data();
@@ -247,7 +253,7 @@ export default function Chat() {
       console.error("Error reading user profiles", err);
     });
     return () => unsubscribe();
-  }, [currentUser]);
+  }, [currentUser, userProfile?.storeId, settings?.id, isSuperAdmin]);
 
   // Subscribe to Chat messages in real time
   useEffect(() => {

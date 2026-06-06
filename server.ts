@@ -116,6 +116,7 @@ async function startServer() {
   // API rate-limit bindings for security
   app.use("/api/send-email", rateLimiter(10));             // Prevent email flood triggers
   app.use("/api/admin/update-user-auth", rateLimiter(5));   // Prevent credential stuffing
+  app.use("/api/admin/create-user-auth", rateLimiter(5));   // Prevent brute force on creation
   app.use("/api/saas/proxy", rateLimiter(15));               // Prevent webhook proxy flood
   app.use("/api/saas/webhook", rateLimiter(25));             // Prevent license poisoning
 
@@ -333,6 +334,161 @@ Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
         success: false, 
         error: "Failed to send email", 
         details: err.message 
+      });
+    }
+  });
+
+  // Endpoint to check if there is a manually pre-registered store admin with this email and password
+  app.post("/api/auth/check-manual-user", async (req, res) => {
+    const { email, password } = req.body;
+
+    if (!email || typeof email !== "string" || !email.includes("@")) {
+      return res.status(400).json({ success: false, error: "invalid_email_format" });
+    }
+
+    if (!password || typeof password !== "string") {
+      return res.status(400).json({ success: false, error: "invalid_password_format" });
+    }
+
+    try {
+      const { default: admin } = await import("firebase-admin");
+      if (admin.apps.length === 0) {
+        admin.initializeApp({
+          projectId: process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0584738558"
+        });
+      }
+
+      const db = admin.firestore();
+      const querySnap = await db.collection("users")
+        .where("email", "==", email.trim().toLowerCase())
+        .get();
+
+      if (querySnap.empty) {
+        return res.json({ success: false, error: "not_found", message: "Aucun compte correspondant en base de données." });
+      }
+
+      // Check if any matching doc has the correct password
+      let matchedDoc: any = null;
+      for (const doc of querySnap.docs) {
+        const data = doc.data();
+        if (data.password === password) {
+          matchedDoc = doc;
+          break;
+        }
+      }
+
+      if (!matchedDoc) {
+        return res.json({ success: false, error: "invalid_password", message: "Mot de passe incorrect." });
+      }
+
+      const isManualTempId = matchedDoc.id.startsWith("user_");
+      return res.json({
+        success: true,
+        needsAuthInit: isManualTempId,
+        storeId: matchedDoc.data().storeId,
+        displayName: matchedDoc.data().displayName,
+        documentId: matchedDoc.id
+      });
+    } catch (err: any) {
+      console.error("[Auth API Error] check-manual-user failed:", err);
+      return res.status(500).json({ success: false, error: "internal_server_error", details: err.message });
+    }
+  });
+
+  // Endpoint to move a manual user's profile to their new registration UID after client-side Firebase Auth creation
+  app.post("/api/auth/link-manual-user", async (req, res) => {
+    const { email, password, newUid } = req.body;
+
+    if (!email || !password || !newUid || typeof newUid !== "string" || !newUid.match(/^[a-zA-Z0-9_\-]+$/)) {
+      return res.status(400).json({ success: false, error: "invalid_parameters" });
+    }
+
+    try {
+      const { default: admin } = await import("firebase-admin");
+      if (admin.apps.length === 0) {
+        admin.initializeApp({
+          projectId: process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0584738558"
+        });
+      }
+
+      const db = admin.firestore();
+      const querySnap = await db.collection("users")
+        .where("email", "==", email.trim().toLowerCase())
+        .get();
+
+      if (querySnap.empty) {
+        return res.status(404).json({ success: false, error: "profile_not_found" });
+      }
+
+      let manualTempDoc: any = null;
+      for (const d of querySnap.docs) {
+        if (d.id.startsWith("user_") && d.data().password === password) {
+          manualTempDoc = d;
+          break;
+        }
+      }
+
+      if (!manualTempDoc) {
+        return res.status(401).json({ success: false, error: "unauthorized" });
+      }
+
+      // Copy data to the new document under doc.id == newUid
+      const profileData = {
+        ...manualTempDoc.data(),
+        uid: newUid
+      };
+
+      await db.collection("users").doc(newUid).set(profileData);
+      // Delete temporary manual user profile
+      await db.collection("users").doc(manualTempDoc.id).delete();
+
+      return res.json({ success: true, message: "Profil lié avec succès !" });
+    } catch (err: any) {
+      console.error("[Auth API Error] link-manual-user failed:", err);
+      return res.status(500).json({ success: false, error: "internal_server_error", details: err.message || String(err) });
+    }
+  });
+
+  // Admin route to create a user in Firebase Auth for manual store creations
+  app.post("/api/admin/create-user-auth", async (req, res) => {
+    const { email, password, displayName, callerEmail } = req.body;
+
+    if (callerEmail !== "anges.gildas@gmail.com" && callerEmail !== "gildas@gmail.com") {
+      return res.status(403).json({ success: false, error: "Accès refusé" });
+    }
+
+    if (!email || typeof email !== "string" || !email.includes("@") || email.length > 150) {
+      return res.status(400).json({ success: false, error: "Format email invalide" });
+    }
+
+    if (!password || typeof password !== "string" || password.length < 6 || password.length > 100) {
+      return res.status(400).json({ success: false, error: "Format de mot de passe invalide (minimum 6 caractères)" });
+    }
+
+    try {
+      const { default: admin } = await import("firebase-admin");
+      
+      if (admin.apps.length === 0) {
+        admin.initializeApp({
+          projectId: process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0584738558"
+        });
+      }
+
+      const userRecord = await admin.auth().createUser({
+        email: email.trim().toLowerCase(),
+        password: password,
+        displayName: displayName || undefined,
+        emailVerified: true
+      });
+
+      return res.json({ success: true, uid: userRecord.uid, message: "Utilisateur créé avec succès dans Firebase Auth !" });
+    } catch (err: any) {
+      console.error("[Admin API Error] Failed to create user Auth credentials:", err);
+      return res.status(200).json({
+        success: false,
+        error: "Erreur Firebase Auth",
+        details: err.message || "Impossible de créer le compte d'authentification",
+        suggestion: "La création de l'utilisateur Firebase Auth a échoué (l'adresse email est peut-être déjà utilisée)."
       });
     }
   });

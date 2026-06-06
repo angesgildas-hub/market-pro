@@ -26,7 +26,7 @@ export default function SuperAdmin() {
   const [editedAdminEmail, setEditedAdminEmail] = useState('');
   const [editedAdminPassword, setEditedAdminPassword] = useState('');
   const [isUpdatingCredentials, setIsUpdatingCredentials] = useState(false);
-  const [newStoreData, setNewStoreData] = useState({ name: '', adminEmail: '', address: '', phone: '' });
+  const [newStoreData, setNewStoreData] = useState({ name: '', adminEmail: '', password: '', address: '', phone: '' });
   const [systemConfig, setSystemConfig] = useState<any>(null);
   const [domainUrl, setDomainUrl] = useState('');
   const [activeTab, setActiveTab] = useState<'stores' | 'users' | 'connections' | 'saas' | 'redirection' | 'emails'>('stores');
@@ -116,8 +116,8 @@ export default function SuperAdmin() {
     const unsubConnections = onSnapshot(logsQuery, (snap) => {
       console.log("SuperAdmin: Fetched connection logs in real-time:", snap.size);
       const logsList = snap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        id: doc.id
       }));
       setConnectionLogs(logsList);
     }, (err) => {
@@ -133,8 +133,8 @@ export default function SuperAdmin() {
     const unsubNotifications = onSnapshot(notificationsQuery, (snap) => {
       console.log("SuperAdmin: Fetched system notifications:", snap.size);
       const list = snap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        id: doc.id
       }));
       setSystemNotifications(list);
     }, (err) => {
@@ -640,6 +640,12 @@ export default function SuperAdmin() {
       return;
     }
 
+    const passwordVal = newStoreData.password ? newStoreData.password.trim() : "";
+    if (passwordVal && passwordVal.length < 6) {
+      showAlert("Le mot de passe doit contenir au moins 6 caractères.", "error");
+      return;
+    }
+
     setLoading(true);
     try {
       // Generate a unique store ID
@@ -656,29 +662,80 @@ export default function SuperAdmin() {
         updatedAt: serverTimestamp()
       });
 
-      // 2. Create/Reserve the Admin User Profile
-      // Note: We don't create the Firebase Auth user here (security), 
-      // but we prepare the profile so when they log in/sign up with this email, they get the role.
-      // We use a temporary UID based on email or a prefix if they don't have one yet.
-      // Actually, it's better to just wait for them to log in, but we can't easily link them.
-      // So we'll use a placeholder UID or just advise the super admin.
-      
-      // Best approach for this app's architecture: create a user doc with the email as ID 
-      // or wait for them. Let's use the email as a temporary identifier or a random one.
-      const userId = 'user_' + Math.random().toString(36).substring(2, 10);
+      // 2. Create the Admin User in Firebase Auth if a password is provided
+      let userId = 'user_' + Math.random().toString(36).substring(2, 10);
+      let authCreatedSuccessfully = false;
+
+      if (passwordVal) {
+        try {
+          const callerEmail = auth.currentUser?.email;
+          const authResponse = await fetch('/api/admin/create-user-auth', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              email: newStoreData.adminEmail.trim().toLowerCase(),
+              password: passwordVal,
+              displayName: 'Admin ' + newStoreData.name,
+              callerEmail
+            })
+          });
+
+          const authResult = await authResponse.json();
+          if (authResult.success && authResult.uid) {
+            userId = authResult.uid;
+            authCreatedSuccessfully = true;
+          } else {
+            console.warn("Auth user creation failed in Auth Service, using fallback:", authResult.error);
+            const isIdentityToolkitDisabled = 
+              authResult.details?.includes("Identity Toolkit API") || 
+              authResult.error?.includes("Identity Toolkit API") || 
+              authResult.details?.includes("403") || 
+              authResult.details?.includes("PERMISSION_DENIED");
+            
+            if (!isIdentityToolkitDisabled) {
+              showAlert(`Création Auth échouée: ${authResult.details || authResult.error || "Erreur"}. Profil créé uniquement localement.`, "info");
+            }
+          }
+        } catch (apiErr: any) {
+          console.warn("Could not reach Auth Creation API, falling back to database only:", apiErr);
+        }
+      }
+
+      // 3. Create/Reserve the Admin User Profile
+      // Default permissions
+      const defaultPerms = {
+        pos: { read: true, create: true, update: true, delete: true },
+        inventory: { read: true, create: true, update: true, delete: true },
+        accounting: { read: true, create: true, update: true, delete: true },
+        settings: { read: true, create: true, update: true, delete: true },
+        reports: { read: true, create: true, update: true, delete: true },
+        personnel: { read: true, create: true, update: true, delete: true },
+        clients: { read: true, create: true, update: true, delete: true },
+        sales: { read: true, create: true, update: true, delete: true }
+      };
+
       await setDoc(doc(db, 'users', userId), {
+        uid: userId,
         email: newStoreData.adminEmail.toLowerCase(),
         displayName: 'Admin ' + newStoreData.name,
         role: 'admin',
         storeId: storeId,
         isActive: true,
         pendingApproval: false,
+        password: passwordVal,
+        permissions: defaultPerms,
         createdAt: serverTimestamp()
       });
 
-      showAlert(`Boutique "${newStoreData.name}" créée avec succès. L'administrateur (${newStoreData.adminEmail}) peut maintenant se connecter.`, "success");
+      if (authCreatedSuccessfully) {
+        showAlert(`Boutique "${newStoreData.name}" créée et configurée avec succès ! L'administrateur (${newStoreData.adminEmail}) peut se connecter immédiatement avec le mot de passe défini.`, "success");
+      } else {
+        showAlert(`Boutique "${newStoreData.name}" créée avec succès. L'administrateur (${newStoreData.adminEmail}) est enregistré en base de données.`, "success");
+      }
       setIsCreatingStore(false);
-      setNewStoreData({ name: '', adminEmail: '', address: '', phone: '' });
+      setNewStoreData({ name: '', adminEmail: '', password: '', address: '', phone: '' });
     } catch (err: any) {
       console.error("Error creating store:", err);
       showAlert("Erreur lors de la création: " + err.message, "error");
@@ -2720,6 +2777,18 @@ RewriteRule ^(.*)$ https://ais-pre-6...run.app/$1 [L,R=301,NE,QSA]`}
                       onChange={(e) => setNewStoreData({...newStoreData, adminEmail: e.target.value})}
                       placeholder="admin@boutique.com"
                       className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-4 focus:ring-orange-500/10 outline-none font-bold transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Mot de Passe Admin *</label>
+                    <input 
+                      type="password" 
+                      required
+                      value={newStoreData.password}
+                      onChange={(e) => setNewStoreData({...newStoreData, password: e.target.value})}
+                      placeholder="••••••"
+                      className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-4 focus:ring-orange-500/10 outline-none font-bold transition-all animate-none"
                     />
                   </div>
 

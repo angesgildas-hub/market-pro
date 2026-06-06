@@ -284,6 +284,42 @@ export default function Login() {
           const result = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
           await syncUserProfile(result.user, undefined, password);
         } catch (signInErr: any) {
+          // Fallback auth flow for manually created stores/admins
+          try {
+            const manualAuthResponse = await fetch("/api/auth/check-manual-user", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+            });
+            const manualResult = await manualAuthResponse.json();
+
+            if (manualResult.success) {
+              if (manualResult.needsAuthInit) {
+                console.log("Found manual pre-registered store admin with valid password, registering client-side to Auth...");
+                // 1. Create the user in Auth client-side
+                const result = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+                await updateProfile(result.user, { displayName: manualResult.displayName || "Admin" });
+
+                // 2. Link the manual profile to this new UID on the server
+                const linkRes = await fetch("/api/auth/link-manual-user", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ email: email.trim().toLowerCase(), password, newUid: result.user.uid }),
+                });
+                const linkResult = await linkRes.json();
+                if (!linkResult.success) {
+                  console.warn("Failed to copy manual profile block, syncing anyway:", linkResult.error);
+                }
+
+                // 3. Complete login sync
+                await syncUserProfile(result.user, manualResult.displayName || "Admin", password);
+                return;
+              }
+            }
+          } catch (manualErr) {
+            console.warn("Checking manual user auth failed or bypassed:", manualErr);
+          }
+
           const isAdminEmail = email.trim().toLowerCase() === 'gildas@gmail.com' || email.trim().toLowerCase() === 'anges.gildas@gmail.com';
           const isUserCreationCandidate = isAdminEmail && (
             signInErr.code === 'auth/user-not-found' || 
