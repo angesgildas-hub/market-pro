@@ -13,8 +13,13 @@ service cloud.firestore {
 
     function isBootstrapAdmin() {
       return isSignedIn() && 
+             request.auth.token.get('email_verified', false) == true &&
              (request.auth.token.email == 'anges.gildas@gmail.com' ||
               request.auth.token.email == 'gildas@gmail.com');
+    }
+
+    function hasUserDoc() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
     function getUserData() {
@@ -22,21 +27,24 @@ service cloud.firestore {
     }
 
     function userStoreId() {
-      return getUserData().storeId;
+      return getUserData().get('storeId', '');
+    }
+
+    function userRole() {
+      return getUserData().get('role', 'cashier');
     }
 
     function belongsToStore(data) {
       return isBootstrapAdmin() || (
-        isSignedIn() && 
-        data.keys().hasAll(['storeId']) && 
+        hasUserDoc() && 
         data.storeId == userStoreId()
       );
     }
 
     function isAdmin() {
       return isBootstrapAdmin() || (
-        isSignedIn() && 
-        getUserData().role in ['admin', 'manager']
+        hasUserDoc() && 
+        userRole() in ['admin', 'manager']
       );
     }
 
@@ -49,20 +57,17 @@ service cloud.firestore {
 
     function canRead(module) {
       return isBootstrapAdmin() || (
-        isSignedIn() && (
-          getUserData().role in ['admin', 'manager'] || (
-            getUserData().keys().hasAll(['permissions']) &&
-            getUserData().permissions.keys().hasAll([module]) &&
-            getUserData().permissions[module].keys().hasAll(['read']) &&
-            getUserData().permissions[module].read == true
-          )
+        hasUserDoc() && (
+          userRole() in ['admin', 'manager'] || 
+          getUserData().get('permissions', {}).get(module, {}).get('read', false) == true
         )
       );
     }
 
     function isLicenseActive() {
       return isBootstrapAdmin() || (
-        isSignedIn() && 
+        hasUserDoc() && 
+        userStoreId() != "" &&
         exists(/databases/$(database)/documents/storeSettings/$(userStoreId())) &&
         get(/databases/$(database)/documents/storeSettings/$(userStoreId())).data.get('licenseStatus', 'inactive') == 'active'
       );
@@ -71,13 +76,9 @@ service cloud.firestore {
     function canCreate(module) {
       return isLicenseActive() && (
         isBootstrapAdmin() || (
-          isSignedIn() && (
-            getUserData().role in ['admin', 'manager'] || (
-              getUserData().keys().hasAll(['permissions']) &&
-              getUserData().permissions.keys().hasAll([module]) &&
-              getUserData().permissions[module].keys().hasAll(['create']) &&
-              getUserData().permissions[module].create == true
-            )
+          hasUserDoc() && (
+            userRole() in ['admin', 'manager'] || 
+            getUserData().get('permissions', {}).get(module, {}).get('create', false) == true
           )
         )
       );
@@ -86,13 +87,9 @@ service cloud.firestore {
     function canUpdate(module) {
       return isLicenseActive() && (
         isBootstrapAdmin() || (
-          isSignedIn() && (
-            getUserData().role in ['admin', 'manager'] || (
-              getUserData().keys().hasAll(['permissions']) &&
-              getUserData().permissions.keys().hasAll([module]) &&
-              getUserData().permissions[module].keys().hasAll(['update']) &&
-              getUserData().permissions[module].update == true
-            )
+          hasUserDoc() && (
+            userRole() in ['admin', 'manager'] || 
+            getUserData().get('permissions', {}).get(module, {}).get('update', false) == true
           )
         )
       );
@@ -101,13 +98,9 @@ service cloud.firestore {
     function canDelete(module) {
       return isLicenseActive() && (
         isBootstrapAdmin() || (
-          isSignedIn() && (
-            getUserData().role in ['admin', 'manager'] || (
-              getUserData().keys().hasAll(['permissions']) &&
-              getUserData().permissions.keys().hasAll([module]) &&
-              getUserData().permissions[module].keys().hasAll(['delete']) &&
-              getUserData().permissions[module].delete == true
-            )
+          hasUserDoc() && (
+            userRole() in ['admin', 'manager'] || 
+            getUserData().get('permissions', {}).get(module, {}).get('delete', false) == true
           )
         )
       );
@@ -217,27 +210,27 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || (isAdmin() && existing().storeId == userStoreId()) || isBootstrapAdmin());
-      allow list: if isBootstrapAdmin() || (isSignedIn() && resource.data.storeId == userStoreId());
+      allow read: if isSignedIn() && (request.auth.uid == userId || (hasUserDoc() && isAdmin() && existing().storeId == userStoreId()) || isBootstrapAdmin());
+      allow list: if isBootstrapAdmin() || (hasUserDoc() && resource.data.storeId == userStoreId());
       allow create: if isBootstrapAdmin() || 
-                      (isSignedIn() && isAdmin() && incoming().storeId == userStoreId() && incoming().uid == userId && isValidUser(incoming())) || 
+                      (hasUserDoc() && isAdmin() && incoming().storeId == userStoreId() && incoming().uid == userId && isValidUser(incoming())) || 
                       (isSignedIn() && request.auth.uid == userId && incoming().uid == userId && incoming().role == 'admin' && incoming().isActive == false);
       allow update: if isBootstrapAdmin() || 
-                      (isAdmin() && (!existing().keys().hasAll(['storeId']) || existing().storeId == userStoreId()) && incoming().storeId == (existing().keys().hasAll(['storeId']) ? existing().storeId : incoming().storeId)) ||
+                      (hasUserDoc() && isAdmin() && (!existing().keys().hasAll(['storeId']) || existing().storeId == userStoreId()) && incoming().storeId == (existing().keys().hasAll(['storeId']) ? existing().storeId : incoming().storeId)) ||
                       (request.auth.uid == userId && 
                        (!existing().keys().hasAll(['role']) || incoming().role == existing().role) && 
                        (!existing().keys().hasAll(['storeId']) || incoming().storeId == existing().storeId) && 
                        (!existing().keys().hasAll(['isActive']) || incoming().isActive == existing().isActive));
-      allow delete: if isBootstrapAdmin() || (isAdmin() && existing().storeId == userStoreId());
+      allow delete: if isBootstrapAdmin() || (hasUserDoc() && isAdmin() && existing().storeId == userStoreId());
     }
 
     match /storeSettings/{settingsId} {
       // Branding identification is public, detailed settings are protected
       allow get: if true; 
       allow list: if isBootstrapAdmin();
-      allow create: if isBootstrapAdmin() || (isSignedIn() && settingsId == request.auth.uid);
+      allow create: if isBootstrapAdmin() || (isSignedIn() && isValidId(settingsId) && (settingsId == request.auth.uid || incoming().get('licenseStatus', 'pending') == 'pending'));
       allow update: if (isBootstrapAdmin()) || (
-        isAdmin() && settingsId == userStoreId() && (
+        hasUserDoc() && isAdmin() && settingsId == userStoreId() && (
           // Store admins can only update brand and contact info, never license fields (ERP PROTECTION)
           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'logo', 'logoUrl', 'signatureUrl', 'currency', 'updatedAt', 'operatorNumbers', 'selectedOperators'])
         )
@@ -328,7 +321,8 @@ service cloud.firestore {
 
     match /mobileMoneySettings/{storeId} {
       allow read: if (canRead('pos') || canRead('accounting')) && (isBootstrapAdmin() || storeId == userStoreId());
-      allow write: if (canUpdate('pos') || isAdmin()) && (isBootstrapAdmin() || storeId == userStoreId());
+      allow create: if isSignedIn() && isValidId(storeId);
+      allow update, delete: if isBootstrapAdmin() || ((canUpdate('pos') || isAdmin()) && storeId == userStoreId());
     }
 
     match /backups/{backupId} {
