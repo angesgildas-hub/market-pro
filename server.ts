@@ -1,7 +1,42 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import nodemailer from "nodemailer";
+
+// Helper to retrieve the database ID dynamically from firebase-applet-config.json
+function getFirebaseConfig() {
+  try {
+    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+    if (fs.existsSync(configPath)) {
+      return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    }
+  } catch (err) {
+    console.error("[Firestore Config Error] Failed to read firebase-applet-config.json:", err);
+  }
+  return null;
+}
+
+async function getFirestoreInstance() {
+  const { default: admin } = await import("firebase-admin");
+  const { getFirestore } = await import("firebase-admin/firestore");
+
+  const config = getFirebaseConfig();
+  const projectId = config?.projectId || process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0584738558";
+  const databaseId = config?.firestoreDatabaseId;
+
+  if (admin.apps.length === 0) {
+    admin.initializeApp({
+      projectId: projectId
+    });
+  }
+
+  const app = admin.app();
+  if (databaseId) {
+    return getFirestore(app, databaseId);
+  }
+  return getFirestore(app);
+}
 
 const currentDirname = typeof __dirname !== "undefined"
   ? __dirname
@@ -215,11 +250,7 @@ L'équipe Market Pro (No-Reply)`;
     // Helper to log system notification to Firestore as a resilient backup/journal audit
     const logNotificationToFirestore = async (status: "sent" | "failed" | "mocked", errMessage?: string) => {
       try {
-        const { default: fAdmin } = await import("firebase-admin");
-        if (fAdmin.apps.length === 0) {
-          fAdmin.initializeApp();
-        }
-        const db = fAdmin.firestore();
+        const db = await getFirestoreInstance();
         await db.collection("systemNotifications").add({
           type: type || "unknown",
           to: to || "unknown",
@@ -351,14 +382,7 @@ Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
     }
 
     try {
-      const { default: admin } = await import("firebase-admin");
-      if (admin.apps.length === 0) {
-        admin.initializeApp({
-          projectId: process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0584738558"
-        });
-      }
-
-      const db = admin.firestore();
+      const db = await getFirestoreInstance();
       const querySnap = await db.collection("users")
         .where("email", "==", email.trim().toLowerCase())
         .get();
@@ -404,14 +428,7 @@ Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
     }
 
     try {
-      const { default: admin } = await import("firebase-admin");
-      if (admin.apps.length === 0) {
-        admin.initializeApp({
-          projectId: process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0584738558"
-        });
-      }
-
-      const db = admin.firestore();
+      const db = await getFirestoreInstance();
       const querySnap = await db.collection("users")
         .where("email", "==", email.trim().toLowerCase())
         .get();
@@ -604,15 +621,7 @@ Impossible de se connecter au serveur SMTP : ${smtpHost}:${smtpPort}
     }
 
     try {
-      const { default: admin } = await import("firebase-admin");
-      
-      if (admin.apps.length === 0) {
-        admin.initializeApp({
-          projectId: process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0584738558"
-        });
-      }
-
-      const db = admin.firestore();
+      const db = await getFirestoreInstance();
       
       // Fetch SaaS Token from database to authenticate request
       const globalsSnap = await db.collection("systemConfig").doc("globals").get();

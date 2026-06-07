@@ -612,7 +612,7 @@ function Sidebar() {
     { icon: ClipboardList, label: t.orders || 'Commandes', path: '/commandes', id: 'commandes', module: 'pos' },
     { icon: Smartphone, label: t.mobile_money || 'Transactions Mobiles', path: '/mobile-money', id: 'mobile_money', module: 'pos' },
     { icon: Package, label: t.inventory, path: '/inventory', id: 'inventory', module: 'inventory' },
-    { icon: History, label: t.history, path: '/history', id: 'history', module: 'pos' },
+    { icon: History, label: t.history, path: '/sales', id: 'sales', module: 'sales' },
     { icon: BarChart3, label: t.accounting, path: '/accounting', id: 'accounting', module: 'accounting' },
     { icon: Users, label: t.customers, path: '/clients', id: 'clients', module: 'clients' },
     { icon: UserCheck, label: t.personnel, path: '/personnel', id: 'personnel', module: 'personnel' },
@@ -832,12 +832,14 @@ function AppRoutes({
     );
   }
 
+  const isPosPage = location.pathname === '/pos';
+
   return (
     <div className={`min-h-screen flex selection:bg-orange-500 selection:text-white theme-${theme} ${theme === 'black' ? 'bg-black' : theme === 'dark-blue' ? 'bg-[#0a192f]' : theme === 'light-blue' ? 'bg-sky-50' : 'bg-[#f2f2f2]'}`}>
       <Sidebar />
       <div className="flex-1 lg:ml-64 flex flex-col">
         <UserHeader isLicenseValid={isLicenseValid} />
-        <main className="flex-1 p-4 sm:p-6 lg:p-12 pt-28 lg:pt-36">
+        <main className={`flex-1 p-4 ${isPosPage ? 'sm:p-6 lg:p-8 pt-24 lg:pt-[106px] lg:pb-4' : 'sm:p-6 lg:p-12 pt-28 lg:pt-36'}`}>
           <AnimatePresence mode="wait">
             <Routes location={location}>
               <Route path="/" element={<PageTransition><Dashboard /></PageTransition>} />

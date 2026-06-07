@@ -60,6 +60,17 @@ export default function Commandes() {
   // Modal state
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => {
+        setToastMessage(null);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
   const [clientSearchText, setClientSearchText] = useState('');
   const [productSearchText, setProductSearchText] = useState('');
   const [orderCart, setOrderCart] = useState<{ product: Product; quantity: number }[]>([]);
@@ -191,6 +202,7 @@ export default function Commandes() {
       setCustomClientName('');
       setOrderNotes('');
       setIsNewOrderModalOpen(false);
+      setToastMessage(`Commande ${cmdNumber} créée et envoyée !`);
     } catch (error) {
       console.error("Error creating order:", error);
       alert("Erreur lors de la création de la commande.");
@@ -211,13 +223,14 @@ export default function Commandes() {
 
   // Cancel order
   const handleCancelOrder = async (orderId: string) => {
-    if (confirm("Êtes-vous sûr de vouloir annuler cette commande ?")) {
-      try {
-        const orderRef = doc(db, 'commandes', orderId);
-        await updateDoc(orderRef, { status: 'cancelled' });
-      } catch (error) {
-        console.error("Error cancelling order:", error);
-      }
+    try {
+      const orderRef = doc(db, 'commandes', orderId);
+      await updateDoc(orderRef, { status: 'cancelled' });
+      setToastMessage("La commande a été annulée avec succès.");
+      setCancellingOrderId(null);
+    } catch (error) {
+      console.error("Error cancelling order:", error);
+      setToastMessage("Erreur lors de l'annulation de la commande.");
     }
   };
 
@@ -256,8 +269,8 @@ export default function Commandes() {
 
     localStorage.setItem('active-preloaded-order', JSON.stringify(payload));
     
-    // Redirect to Point of Sale
-    navigate('/pos');
+    // Just display "Commande envoyée" toast, do not navigate('/pos')
+    setToastMessage(`Commande ${order.number} envoyée au Point de Vente !`);
   };
 
   // Filtered lists for modal dropdown selector
@@ -329,7 +342,7 @@ export default function Commandes() {
         })}
       </div>
 
-      {/* Orders Grid */}
+      {/* Orders List View */}
       {filteredCommandes.length === 0 ? (
         <div className="bg-white rounded-[40px] border border-gray-100 p-16 text-center shadow-xl flex flex-col items-center justify-center">
           <div className="w-20 h-20 bg-slate-50 rounded-[30px] flex items-center justify-center text-slate-400 mb-6">
@@ -341,130 +354,174 @@ export default function Commandes() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredCommandes.map((order) => {
-            const dateObj = order.timestamp?.toDate ? order.timestamp.toDate() : new Date();
-            
-            // Status specifics
-            let statusText = "En attente";
-            let statusColor = "bg-amber-50 border-amber-100 text-amber-700";
-            let statusIcon = <Clock size={14} className="animate-pulse" />;
-            
-            if (order.status === 'served') {
-              statusText = "Préparée";
-              statusColor = "bg-orange-50 border-orange-100 text-orange-700";
-              statusIcon = <CheckCircle size={14} />;
-            } else if (order.status === 'completed') {
-              statusText = "Finalisée";
-              statusColor = "bg-green-50 border-green-100 text-green-700";
-              statusIcon = <CheckCircle size={14} />;
-            } else if (order.status === 'cancelled') {
-              statusText = "Annulée";
-              statusColor = "bg-slate-50 border-slate-100 text-slate-600";
-              statusIcon = <XCircle size={14} />;
-            }
+        <div className="bg-white rounded-[32px] border border-slate-100 shadow-xl overflow-hidden">
+          {/* Desktop Table Header */}
+          <div className="hidden lg:grid grid-cols-12 gap-4 px-8 py-5 bg-slate-900 text-white font-black uppercase text-[10px] tracking-widest border-b border-slate-150">
+            <div className="col-span-2">N° Commande / Heure</div>
+            <div className="col-span-2">Client</div>
+            <div className="col-span-3">Articles</div>
+            <div className="col-span-2">Créateur / Notes</div>
+            <div className="col-span-1 text-right">Total</div>
+            <div className="col-span-1 text-center">Statut</div>
+            <div className="col-span-1 text-right font-mono">Actions</div>
+          </div>
 
-            return (
-              <motion.div
-                key={order.id}
-                layout
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="bg-white rounded-[32px] border border-slate-100 shadow-md hover:shadow-xl transition-shadow flex flex-col p-6 overflow-hidden relative group"
-              >
-                {/* Upper stats banner */}
-                <div className="flex items-center justify-between mb-4 pb-4 border-b border-dashed border-slate-100">
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-lg text-slate-900 tracking-tight">{order.number}</span>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      {dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                  
-                  <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-black uppercase tracking-wide ${statusColor}`}>
-                    {statusIcon}
-                    <span>{statusText}</span>
-                  </div>
-                </div>
+          <div className="divide-y divide-slate-100">
+            {filteredCommandes.map((order) => {
+              const dateObj = order.timestamp?.toDate ? order.timestamp.toDate() : new Date();
+              
+              // Status specifics
+              let statusText = "En attente";
+              let statusColor = "bg-amber-50 border-amber-100 text-amber-700";
+              let statusIcon = <Clock size={12} className="animate-pulse" />;
+              
+              if (order.status === 'served') {
+                statusText = "Préparée";
+                statusColor = "bg-orange-50 border-orange-100 text-orange-700";
+                statusIcon = <CheckCircle size={12} />;
+              } else if (order.status === 'completed') {
+                statusText = "Finalisée";
+                statusColor = "bg-green-50 border-green-100 text-green-700";
+                statusIcon = <CheckCircle size={12} />;
+              } else if (order.status === 'cancelled') {
+                statusText = "Annulée";
+                statusColor = "bg-slate-50 border-slate-100 text-slate-600";
+                statusIcon = <XCircle size={12} />;
+              }
 
-                {/* Sender / Client info */}
-                <div className="space-y-2 mb-4">
-                  <div className="flex items-center gap-2 text-slate-500 text-sm font-medium">
-                    <User size={14} className="text-slate-400" />
-                    <span>Créé par: <strong className="text-slate-700 font-bold">{order.createdByName || 'Serveur'}</strong></span>
-                  </div>
-                  
-                  <div className="flex items-center gap-2 text-slate-500 text-sm font-medium">
-                    <FileText size={14} className="text-slate-400" />
-                    <span>Client: <strong className="text-orange-500 font-black">{order.clientName || 'Passager'}</strong></span>
-                  </div>
-                  
-                  {order.notes && (
-                    <div className="mt-1 p-2 bg-amber-50/50 rounded-xl border border-amber-100/40 text-xs text-amber-800 font-medium italic">
-                      "{order.notes}"
+              return (
+                <motion.div
+                  key={order.id}
+                  layout
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="p-6 lg:px-8 hover:bg-slate-50/50 transition-colors"
+                >
+                  {/* Grid for desktop layout, flex-column for mobile */}
+                  <div className="flex flex-col lg:grid lg:grid-cols-12 lg:items-center gap-4">
+                    {/* Commande / Heure */}
+                    <div className="col-span-2 flex lg:flex-col items-center lg:items-start justify-between lg:justify-center gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-base text-slate-900 tracking-tight">{order.number}</span>
+                      </div>
+                      <span className="text-[11px] text-slate-400 font-extrabold bg-slate-100 px-2 py-0.5 rounded-md font-mono">
+                        {dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
                     </div>
-                  )}
-                </div>
 
-                {/* Items preview list */}
-                <div className="bg-slate-50/50 rounded-2xl p-3.5 space-y-2 mb-6 flex-1 min-h-[96px]">
-                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Articles</p>
-                  <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                    {order.items.map((item, idx) => (
-                      <li key={idx} className="flex justify-between items-center text-xs">
-                        <span className="text-slate-600 max-w-[200px] truncate">{item.name}</span>
-                        <span className="text-slate-400 font-medium">
-                          x{item.quantity} <span className="text-slate-700 font-bold ml-1">{item.total.toLocaleString()} F</span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                    {/* Client */}
+                    <div className="col-span-2 flex lg:flex-col justify-center gap-0.5">
+                      <span className="text-slate-400 text-[9px] font-black uppercase lg:hidden">Client</span>
+                      <strong className="text-orange-500 font-extrabold text-sm">{order.clientName || 'Passager'}</strong>
+                    </div>
 
-                {/* Bottom Total & Actions */}
-                <div className="space-y-4">
-                  <div className="flex justify-between items-end">
-                    <span className="text-slate-400 text-[10px] font-black uppercase tracking-wider">Total</span>
-                    <span className="text-xl font-black text-slate-900 tracking-tight">{order.totalAmount.toLocaleString()} FCFA</span>
+                    {/* Articles preview */}
+                    <div className="col-span-3 flex lg:flex-col justify-center gap-1.5">
+                      <span className="text-slate-400 text-[9px] font-black uppercase lg:hidden mb-1">Articles</span>
+                      <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                        {order.items.map((item, idx) => (
+                          <span key={idx} className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 text-[11px] font-bold px-2 py-1 rounded-lg">
+                            {item.name} <strong className="text-orange-600 text-[10px]">x{item.quantity}</strong>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Creator / Notes */}
+                    <div className="col-span-2 flex lg:flex-col justify-center gap-1 text-xs">
+                      <div className="text-slate-500">
+                        <span className="text-slate-400 text-[9px] font-black uppercase lg:hidden inline mr-1">Créé par:</span>
+                        <span>{order.createdByName || 'Serveur'}</span>
+                      </div>
+                      {order.notes && (
+                        <div className="text-amber-800 font-medium italic text-[11px] bg-amber-50 rounded-lg p-2 border border-amber-100/40">
+                          "{order.notes}"
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Total Amount */}
+                    <div className="col-span-1 lg:text-right flex lg:flex-col justify-between items-center lg:items-end lg:justify-center gap-1">
+                      <span className="text-slate-400 text-[9px] font-black uppercase lg:hidden">Total</span>
+                      <span className="text-base font-black text-slate-900 tracking-tight">
+                        {order.totalAmount.toLocaleString()} F
+                      </span>
+                    </div>
+
+                    {/* Status badge */}
+                    <div className="col-span-1 lg:text-center flex lg:flex-col justify-between items-center lg:items-center lg:justify-center gap-1">
+                      <span className="text-slate-400 text-[9px] font-black uppercase lg:hidden">Statut</span>
+                      <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[10px] font-black uppercase tracking-wider ${statusColor}`}>
+                        {statusIcon}
+                        <span>{statusText}</span>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="col-span-1 text-right flex items-center justify-end gap-2 mt-4 lg:mt-0 pt-4 lg:pt-0 border-t border-dashed border-slate-100 lg:border-t-0">
+                      {order.status === 'pending' && (
+                        <button
+                          onClick={() => handleServeOrder(order.id)}
+                          className="flex-1 lg:flex-none px-4 py-2 bg-orange-500 hover:bg-orange-600 active:scale-95 transition-all text-white rounded-xl font-extrabold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 shadow-md shadow-orange-500/10 min-w-[120px]"
+                        >
+                          <Check size={12} />
+                          Servir
+                        </button>
+                      )}
+                      
+                      {order.status === 'served' && (
+                        <button
+                          onClick={() => handleSendToPOS(order)}
+                          className="flex-1 lg:flex-none px-4 py-2 bg-orange-500 hover:bg-orange-600 active:scale-95 transition-all text-white rounded-xl font-extrabold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/10 min-w-[125px]"
+                        >
+                          <ShoppingCart size={11} />
+                          Encaisser
+                          <ArrowRight size={11} />
+                        </button>
+                      )}
+
+                      {(order.status === 'pending' || order.status === 'served') && (
+                        <div className="relative">
+                          {cancellingOrderId === order.id ? (
+                            <div className="absolute right-0 bottom-full mb-2 bg-white rounded-2xl shadow-2xl border border-red-100 p-3 z-30 min-w-[200px] flex flex-col gap-2">
+                              <p className="text-[10px] text-red-600 font-extrabold uppercase text-center">Confirmer l'annulation ?</p>
+                              <div className="flex gap-1.5 justify-center">
+                                <button
+                                  onClick={() => handleCancelOrder(order.id)}
+                                  className="px-2.5 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-lg text-[9px] font-black uppercase tracking-wider animate-pulse"
+                                >
+                                  Oui, Annuler
+                                </button>
+                                <button
+                                  onClick={() => setCancellingOrderId(null)}
+                                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[9px] font-black uppercase tracking-wider"
+                                >
+                                  Non
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                          
+                          <button
+                            onClick={() => setCancellingOrderId(cancellingOrderId === order.id ? null : order.id)}
+                            className={`p-2.5 rounded-xl border transition-all ${
+                              cancellingOrderId === order.id 
+                                ? 'bg-red-500 text-white border-red-500' 
+                                : 'bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 border-slate-100'
+                            }`}
+                            title="Annuler la commande"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-
-                  <div className="pt-2 flex flex-wrap gap-2 border-t border-slate-100">
-                    {order.status === 'pending' && (
-                      <button
-                        onClick={() => handleServeOrder(order.id)}
-                        className="flex-1 py-3 bg-orange-500 hover:bg-orange-600 active:scale-95 transition-all text-white rounded-xl font-bold text-xs uppercase tracking-wide flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/10"
-                      >
-                        <Check size={14} />
-                        Prête / Servie
-                      </button>
-                    )}
-                    
-                    {order.status === 'served' && (
-                      <button
-                        onClick={() => handleSendToPOS(order)}
-                        className="flex-1 py-3 bg-orange-500 hover:bg-orange-600 active:scale-95 transition-all text-white rounded-xl font-bold text-xs uppercase tracking-wide flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/10"
-                      >
-                        <ShoppingCart size={14} />
-                        Facturer (POS)
-                        <ArrowRight size={14} className="animate-bounce-horizontal" />
-                      </button>
-                    )}
-
-                    {(order.status === 'pending' || order.status === 'served') && (
-                      <button
-                        onClick={() => handleCancelOrder(order.id)}
-                        className="p-3 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl transition-all border border-slate-100"
-                        title="Annuler"
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </motion.div>
-            );
-          })}
+                </motion.div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -705,6 +762,23 @@ export default function Commandes() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-white/10 text-white rounded-2xl px-6 py-4 shadow-2xl flex items-center gap-3 backdrop-blur-md"
+          >
+            <div className="w-8 h-8 rounded-xl bg-orange-500/20 text-orange-400 flex items-center justify-center">
+              <Check size={18} className="font-extrabold" />
+            </div>
+            <div className="text-xs font-bold uppercase tracking-wider">{toastMessage}</div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

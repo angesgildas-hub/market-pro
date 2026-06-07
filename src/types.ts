@@ -204,3 +204,26 @@ export interface MobileTransaction {
   countryCode?: string;
   merchantNumber?: string;
 }
+
+export interface CommandeItem {
+  productId: string;
+  name: string;
+  quantity: number;
+  priceAtSale: number;
+  total: number;
+}
+
+export interface Commande {
+  id: string;
+  storeId: string;
+  timestamp: any;
+  createdBy: string;
+  createdByName?: string;
+  items: CommandeItem[];
+  totalAmount: number;
+  status: 'pending' | 'served' | 'completed' | 'cancelled';
+  clientName?: string;
+  clientId?: string;
+  notes?: string;
+  number: string;
+}
