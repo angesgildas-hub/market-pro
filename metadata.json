@@ -1,7 +1,9 @@
 {
   "name": "MARKET PRO",
   "description": "A comprehensive supermarket management system featuring inventory tracking, real-time POS, and detailed financial reporting.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": [
+    "camera"
+  ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

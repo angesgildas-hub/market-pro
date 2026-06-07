@@ -23,9 +23,11 @@ import {
   Bell,
   Volume2,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  ScanBarcode
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import BarcodeScannerModal from './BarcodeScannerModal';
 import { collection, addDoc, doc, updateDoc, onSnapshot, query, orderBy, serverTimestamp, runTransaction, where, getDocs, setDoc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../services/db';
@@ -40,6 +42,7 @@ export default function Pos() {
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [discount, setDiscount] = useState<number>(0);
   const [amountReceived, setAmountReceived] = useState<number>(0);
@@ -762,15 +765,22 @@ export default function Pos() {
         }
       }
 
+      // F3 to trigger Barcode Scanner
+      if (e.key === 'F3' && !isCheckoutOpen) {
+        e.preventDefault();
+        setIsScannerOpen(prev => !prev);
+      }
+
       // Escape to close modals
       if (e.key === 'Escape') {
         setIsCheckoutOpen(false);
+        setIsScannerOpen(false);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cart.length, isCheckoutOpen, checkoutStep, isProcessing, paymentMethod, amountReceived, total]);
+  }, [cart.length, isCheckoutOpen, checkoutStep, isProcessing, paymentMethod, amountReceived, total, isScannerOpen]);
 
   const filteredProducts = products.filter(p => {
     const searchLower = searchQuery.toLowerCase();
@@ -788,7 +798,15 @@ export default function Pos() {
       <div className="flex-1 flex flex-col gap-4 lg:overflow-hidden">
         <div className="flex items-center justify-between gap-4">
            <h1 className="text-2xl font-black tracking-tighter text-gray-900 uppercase">Point de Vente</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button 
+              onClick={() => setIsScannerOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:brightness-105 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-md active:scale-95 border border-orange-500"
+              title="Scanner un code-barres (F3)"
+            >
+              <ScanBarcode size={14} className="text-white" />
+              <span>Scanner (F3)</span>
+            </button>
             <button 
               onClick={() => setIsOrdersDrawerOpen(true)}
               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-sm active:scale-95 border ${
@@ -1206,6 +1224,14 @@ export default function Pos() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Barcode Camera Scanner Modal Overlay */}
+      <BarcodeScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        products={products}
+        onAddProduct={addToCart}
+      />
 
       {/* Floating Real-time Notification Toast Banner */}
       <div className="fixed top-6 right-6 z-50 pointer-events-none w-full max-w-sm">
