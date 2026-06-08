@@ -7,8 +7,19 @@ import {
   ShoppingBag,
   ArrowUpRight,
   ArrowDownRight,
-  Lock
+  Lock,
+  Zap,
+  Trophy,
+  Target,
+  Edit3,
+  Clock,
+  Sparkles,
+  ShieldCheck,
+  FileDown,
+  Activity
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { jsPDF } from 'jspdf';
 import { AppContext } from '../App';
 import { collection, query, getDocs, limit, orderBy, where, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
@@ -63,6 +74,187 @@ export default function Dashboard() {
   const { userRole, hasPermission, userProfile } = useContext(AppContext);
   const isSuperAdmin = auth.currentUser?.email === 'anges.gildas@gmail.com' || auth.currentUser?.email === 'gildas@gmail.com';
   
+  const navigate = useNavigate();
+  
+  // Interactive Sales Goal per shop (persisted locally)
+  const [salesGoal, setSalesGoal] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem(`sales-goal-${userProfile?.storeId || 'common'}`);
+      return stored ? parseInt(stored, 10) : 2500000;
+    } catch (_) {
+      return 2500000;
+    }
+  });
+  const [isEditingGoal, setIsEditingGoal] = useState(false);
+  const [newGoalInput, setNewGoalInput] = useState(salesGoal.toString());
+
+  const handleSaveGoal = () => {
+    const num = parseInt(newGoalInput, 10);
+    if (!isNaN(num) && num > 0) {
+      setSalesGoal(num);
+      try {
+        localStorage.setItem(`sales-goal-${userProfile?.storeId || 'common'}`, num.toString());
+      } catch (_) {}
+      setIsEditingGoal(false);
+    }
+  };
+
+  const handleExportDashboardPDF = () => {
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      // Header Banner
+      doc.setFillColor(15, 23, 42); // slate-900 / dark-blue
+      doc.rect(0, 0, 210, 38, 'F');
+
+      // Decorative orange separator
+      doc.setFillColor(249, 115, 22); // orange-500
+      doc.rect(0, 38, 210, 1.5, 'F');
+
+      // Header Title
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(22);
+      doc.text(userProfile?.storeName || "MARKET PRO", 14, 16);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(226, 232, 240); // slate-200
+      doc.text("RAPPORT COMPTABLE ET D'ACTIVITÉ DU COMPTOIR", 14, 23);
+      doc.text(`Propulsé par G-TECH LAB • Lomé, Togo`, 14, 27);
+
+      // Metadata Info Box
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.text(`GÉNÉRÉ LE : ${new Date().toLocaleDateString('fr-TG')} à ${new Date().toLocaleTimeString('fr-TG')}`, 196, 15, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Rôle actif : ${userRole?.toUpperCase() || 'ADMINISTRATEUR'}`, 196, 20, { align: 'right' });
+      doc.text(`Licence G-Tech Cloud : ACTIVE`, 196, 25, { align: 'right' });
+
+      // Body Titles
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.setFontSize(13);
+      doc.setFont('helvetica', 'bold');
+      doc.text("1. Indicateurs Réels de Performance (KPIs)", 14, 52);
+      
+      // Grid separator
+      doc.setDrawColor(241, 245, 249);
+      doc.setLineWidth(0.5);
+      doc.line(14, 55, 196, 55);
+
+      // Grid helper cards
+      const drawKpiCard = (x: number, y: number, w: number, h: number, title: string, val: string) => {
+        doc.setDrawColor(226, 232, 240);
+        doc.setFillColor(250, 251, 252);
+        doc.roundedRect(x, y, w, h, 3, 3, 'FD');
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(100, 116, 139); // slate-500
+        doc.text(title.toUpperCase(), x + 4, y + 6);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(15, 23, 42); // slate-900
+        doc.text(val, x + 4, y + 13);
+      };
+
+      if (isSuperAdmin) {
+        drawKpiCard(14, 59, 42, 17, "Total Boutiques", `${stats.totalStores || 0}`);
+        drawKpiCard(60, 59, 42, 17, "Boutiques Actives", `${stats.activeStores || 0}`);
+        drawKpiCard(106, 59, 42, 17, "Boutiques Suspendues", `${stats.suspendedStores || 0}`);
+        drawKpiCard(152, 59, 44, 17, "Utilisateurs Système", `${stats.totalUsers || 0}`);
+      } else {
+        drawKpiCard(14, 59, 42, 17, "Ventes Totales", canViewReports ? `${stats.totalSales.toLocaleString('de-DE')} F` : "N/A (Privé)");
+        drawKpiCard(60, 59, 42, 17, "Nombre Commandes", `${stats.orders || 0}`);
+        drawKpiCard(106, 59, 42, 17, "Nombre Produits", `${stats.products || 0}`);
+        drawKpiCard(152, 59, 44, 17, "Clients Enregistrés", canViewReports ? `${stats.customers || 0}` : "N/A (Privé)");
+      }
+
+      // Progression / Budget target
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(13);
+      doc.setFont('helvetica', 'bold');
+      doc.text("2. Suivi et Progression de l'Objectif Mensuel", 14, 91);
+      doc.line(14, 94, 196, 94);
+
+      doc.setFillColor(254, 243, 199); // amber-100
+      doc.setDrawColor(252, 211, 77); // amber-300
+      doc.roundedRect(14, 98, 182, 22, 3, 3, 'FD');
+
+      doc.setTextColor(146, 64, 14); // amber-800
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.text(`OBJECTIF PRINCIPAL DU COMPTOIR :  ${salesGoal.toLocaleString('de-DE')} FCFA`, 19, 105);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(120, 113, 108);
+      const remainingToGoal = Math.max(0, salesGoal - stats.totalSales);
+      const progressText = `Ventes actuelles accumulées : ${stats.totalSales.toLocaleString('de-DE')} FCFA. Progression : ${Math.min(100, Math.round((stats.totalSales / salesGoal) * 100))}% du but ciblé.`;
+      const remainText = remainingToGoal > 0 
+        ? `Écart à combler pour atteindre l'objectif fixé : ${remainingToGoal.toLocaleString('de-DE')} FCFA.`
+        : `Félicitations ! Votre boutique a dépassé l'objectif mensuel de +${Math.abs(stats.totalSales - salesGoal).toLocaleString('de-DE')} FCFA !`;
+      
+      doc.text(progressText, 19, 110);
+      doc.text(remainText, 19, 114);
+
+      // Inventory alerts
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(13);
+      doc.setFont('helvetica', 'bold');
+      doc.text("3. Niveau d'Alerte & Inventaire Critique", 14, 134);
+      doc.line(14, 137, 196, 137);
+
+      let currentY = 143;
+      if (alerts && alerts.length > 0) {
+        alerts.forEach((alert, index) => {
+          if (currentY + 12 < 280) {
+            doc.setFillColor(249, 115, 22);
+            doc.circle(17, currentY - 1, 1, 'F');
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(9);
+            doc.setTextColor(30, 41, 59);
+            doc.text(`${index + 1}. ${alert.name || 'Produit'}`, 21, currentY);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(8.5);
+            doc.setTextColor(100, 116, 139);
+            const alertDetail = alert.alertType === 'expiry' 
+              ? `État de validité de service : Expire le ${new Date(alert.expiryDate).toLocaleDateString()}`
+              : `Alerte niveau de stockage : Plus que ${alert.stock || 0} unité(s) restante(s). Seuil minimum configuré : ${alert.lowStockThreshold || 5}.`;
+            doc.text(alertDetail, 21, currentY + 4.5);
+            
+            currentY += 14;
+          }
+        });
+      } else {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(100, 116, 139);
+        doc.text("Aucune alerte critique enregistrée pour le moment. Votre boutique est entièrement optimisée !", 18, 144);
+      }
+
+      // Sign-off
+      doc.setDrawColor(226, 232, 240);
+      doc.line(14, 275, 196, 275);
+      
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Rapport administratif confidentiel édité par MARKET PRO sous l'infrastructure G-TECH CLOUD SECURE.`, 105, 281, { align: 'center' });
+      doc.text(`Conforme au decret N° 2019-014 sur la protection des données et transactions du commerce électronique en vigueur au Togo.`, 105, 285, { align: 'center' });
+
+      const cleanStoreName = (userProfile?.storeName || 'MarketPro').replace(/[^a-zA-Z0-9]/g, '_');
+      doc.save(`Rapport_Activite_${cleanStoreName}_${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (e: any) {
+      console.error(e);
+      alert("Erreur lors de la génération du rapport PDF : " + e.message);
+    }
+  };
+
   const [stats, setStats] = useState({
     totalSales: 0,
     orders: 0,
@@ -252,11 +444,176 @@ export default function Dashboard() {
   const canViewReports = hasPermission('reports', 'read');
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-4xl font-bold tracking-tight text-gray-900">Dashboard</h1>
-        <p className="text-gray-500 font-medium">Bon retour, voici un aperçu de votre activité.</p>
+    <div className="space-y-8 text-left">
+      {/* Premium Localized Workspace Header */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5 bg-white p-6 sm:p-8 rounded-[32px] border border-gray-100 shadow-sm">
+        <div className="space-y-1.5 text-left">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-700 rounded-full text-[10px] font-black uppercase tracking-widest border border-green-200/50">
+              <ShieldCheck size={12} className="text-green-600 shrink-0" />
+              <span>G-Tech Cloud Certifié</span>
+            </span>
+            <span className="flex items-center gap-1 px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-[10px] font-mono">
+              <Clock size={11} className="text-slate-500 shrink-0" />
+              <span>GMT+0 Lomé</span>
+            </span>
+          </div>
+          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-gray-900 flex items-center gap-2 pt-0.5">
+            <span>
+              {(() => {
+                const hr = new Date().getHours();
+                if (hr < 12) return "Bonjour";
+                if (hr < 18) return "Bon après-midi";
+                return "Bonsoir";
+              })()}
+            </span>
+            {userProfile?.displayName ? (
+              <span className="text-orange-500 italic font-black">, {userProfile.displayName}</span>
+            ) : null}
+            <span className="animate-pulse">👋</span>
+          </h1>
+          <p className="text-gray-500 text-sm font-medium">
+            Tableau de bord de <span className="text-slate-800 font-extrabold">{userProfile?.storeName || 'votre boutique'}</span>.
+          </p>
+        </div>
+
+        {/* Global Instant PDF Downloader */}
+        <div className="flex shrink-0">
+          <button
+            onClick={handleExportDashboardPDF}
+            className="flex items-center justify-center gap-2.5 px-6 py-4 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl shadow-orange-500/20 w-full sm:w-auto"
+            title="Exporter l'activité consolidée au format PDF"
+          >
+            <FileDown size={16} />
+            <span>Rapport d'Activité (PDF)</span>
+          </button>
+        </div>
       </div>
+
+      {/* Fast Shortcuts & Command Center Banner */}
+      {!isSuperAdmin && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <button
+            onClick={() => navigate('/pos')}
+            className="flex flex-col items-center justify-center gap-2 p-4 bg-white hover:bg-slate-50 border border-gray-100 rounded-2xl transition-all shadow-sm group text-center"
+          >
+            <div className="w-10 h-10 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Zap size={18} className="fill-orange-500" />
+            </div>
+            <span className="text-[10px] font-black uppercase text-gray-800 tracking-wider">Faire une vente</span>
+          </button>
+
+          <button
+            onClick={() => navigate('/inventory')}
+            className="flex flex-col items-center justify-center gap-2 p-4 bg-white hover:bg-slate-50 border border-gray-100 rounded-2xl transition-all shadow-sm group text-center"
+          >
+            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-500 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Package size={18} />
+            </div>
+            <span className="text-[10px] font-black uppercase text-gray-800 tracking-wider">Ajouter Produit</span>
+          </button>
+
+          <button
+            onClick={() => navigate('/accounting')}
+            className="flex flex-col items-center justify-center gap-2 p-4 bg-white hover:bg-slate-50 border border-gray-100 rounded-2xl transition-all shadow-sm group text-center"
+          >
+            <div className="w-10 h-10 rounded-xl bg-green-50 text-green-500 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Activity size={18} />
+            </div>
+            <span className="text-[10px] font-black uppercase text-gray-800 tracking-wider">Comptabilité</span>
+          </button>
+
+          <button
+            onClick={() => navigate('/personnel')}
+            className="flex flex-col items-center justify-center gap-2 p-4 bg-white hover:bg-slate-50 border border-gray-100 rounded-2xl transition-all shadow-sm group text-center"
+          >
+            <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-500 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Users size={18} />
+            </div>
+            <span className="text-[10px] font-black uppercase text-gray-800 tracking-wider">Gérer Personnel</span>
+          </button>
+        </div>
+      )}
+
+      {/* Interactive Monthly Revenue Goal Tracker */}
+      {!isSuperAdmin && canViewReports && (
+        <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-[32px] p-6 sm:p-8 border border-white/5 shadow-xl relative overflow-hidden">
+          {/* Accent decoration overlay */}
+          <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-radial from-orange-500/10 to-transparent pointer-events-none" />
+          
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+            <div className="space-y-2 text-left">
+              <div className="flex items-center gap-2 text-orange-400">
+                <Trophy size={18} />
+                <span className="text-[10px] font-black uppercase tracking-widest">Suivi d'objectif mensuel</span>
+              </div>
+              
+              <div className="flex items-center gap-3.5 flex-wrap">
+                <h3 className="text-xl sm:text-2xl font-black">
+                  Objectif : {salesGoal.toLocaleString('de-DE')} FCFA
+                </h3>
+                
+                {isEditingGoal ? (
+                  <div className="flex items-center gap-2 bg-white/10 p-1 rounded-xl border border-white/10">
+                    <input
+                      type="number"
+                      value={newGoalInput}
+                      onChange={(e) => setNewGoalInput(e.target.value)}
+                      className="bg-transparent text-white placeholder-white/30 text-xs font-bold outline-none px-2 w-28 text-left border-none"
+                      placeholder="Nouveau but"
+                    />
+                    <button
+                      onClick={handleSaveGoal}
+                      className="px-3 py-1 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-[9px] font-black uppercase tracking-wider transition-colors"
+                    >
+                      Enregistrer
+                    </button>
+                    <button
+                      onClick={() => setIsEditingGoal(false)}
+                      className="text-white/50 hover:text-white text-[11px] font-bold px-1"
+                    >
+                      Annuler
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setNewGoalInput(salesGoal.toString()); setIsEditingGoal(true); }}
+                    className="flex items-center gap-1 px-3 py-1 bg-white/10 hover:bg-white/20 text-white/80 hover:text-white rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all"
+                  >
+                    <Edit3 size={11} className="text-orange-400" />
+                    <span>Modifier le but</span>
+                  </button>
+                )}
+              </div>
+
+              <p className="text-slate-300 text-xs font-semibold leading-relaxed max-w-xl">
+                {stats.totalSales >= salesGoal ? (
+                  <span className="text-green-400 font-bold">✨ Incroyable ! Vous avez franchi votre objectif de vente de ce mois-ci ! Continuez ainsi.</span>
+                ) : (
+                  <span>Il vous reste <strong className="text-orange-400">{(salesGoal - stats.totalSales).toLocaleString('de-DE')} F</strong> à comptabiliser pour atteindre l'objectif ciblé de ce mois.</span>
+                )}
+              </p>
+            </div>
+
+            <div className="flex flex-col items-center md:items-end gap-1.5 min-w-[120px]">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Progression</span>
+              <span className="text-3xl sm:text-4xl font-black text-white italic tracking-tighter">
+                {Math.min(100, Math.round((stats.totalSales / salesGoal) * 100))}%
+              </span>
+            </div>
+          </div>
+
+          {/* Progress bar alignment */}
+          <div className="mt-6 w-full h-3 bg-white/10 rounded-full overflow-hidden p-0.5 border border-white/5">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${Math.min(100, (stats.totalSales / salesGoal) * 100)}%` }}
+              transition={{ duration: 1.2, ease: "easeOut" }}
+              className="h-full bg-gradient-to-r from-orange-500 to-amber-500 rounded-full shadow-lg"
+            />
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {isSuperAdmin ? (

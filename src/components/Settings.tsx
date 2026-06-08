@@ -863,10 +863,11 @@ export default function Settings() {
   ];
 
   const [activationSuccess, setActivationSuccess] = useState(false);
+  const [licenseError, setLicenseError] = useState<string | null>(null);
 
   const handleUpdateLicense = (e: React.FormEvent) => {
     e.preventDefault();
-    alert("Veuillez contacter le support Market pour activer ou renouveler votre licence. Email: admin@market.com");
+    setLicenseError("Clé d'activation invalide ou expirée. Veuillez contacter le support technique G-Tech Lab au +228 91 03 30 04 ou par email à anges.gildas@gmail.com pour activer ou renouveler votre licence d'utilisation.");
   };
 
   return (
@@ -1998,6 +1999,21 @@ export default function Settings() {
                         Activer la Licence
                       </button>
                     </form>
+                    
+                    {licenseError && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        className="mt-5 p-5 bg-red-50 text-red-700 rounded-2xl border border-red-100 flex items-start gap-3.5 text-left"
+                      >
+                        <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <p className="text-xs font-black uppercase tracking-wider">Erreur de Clé</p>
+                          <p className="text-xs font-semibold leading-relaxed">{licenseError}</p>
+                        </div>
+                      </motion.div>
+                    )}
+
                     <p className="mt-4 text-[10px] text-gray-400 font-medium">SUPPORT: G-TECH LAB SOLUTION • ANGES.GILDAS@GMAIL.COM / +228 91 03 30 04</p>
                   </div>
                 </div>

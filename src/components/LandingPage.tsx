@@ -18,6 +18,7 @@ import { Link } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { StoreSettings } from '../types';
+import LegalDocsModal from './LegalDocsModal';
 
 const features = [
   {
@@ -99,6 +100,8 @@ const testimonials = [
 
 export default function LandingPage() {
   const [storeSettings, setStoreSettings] = useState<StoreSettings | null>(null);
+  const [isLegalOpen, setIsLegalOpen] = useState(false);
+  const [legalTab, setLegalTab] = useState<'cgu' | 'privacy'>('cgu');
 
   useEffect(() => {
     const fetchStore = async () => {
@@ -355,8 +358,8 @@ export default function LandingPage() {
             </div>
             <div className="flex flex-col gap-4">
                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Légal</span>
-               <a href="#" className="text-sm font-medium hover:text-orange-500 transition-colors">Confidentialité</a>
-               <a href="#" className="text-sm font-medium hover:text-orange-500 transition-colors">CGV</a>
+               <button onClick={() => { setLegalTab('privacy'); setIsLegalOpen(true); }} className="text-sm font-medium hover:text-orange-500 transition-colors text-left">Confidentialité</button>
+               <button onClick={() => { setLegalTab('cgu'); setIsLegalOpen(true); }} className="text-sm font-medium hover:text-orange-500 transition-colors text-left">CGV</button>
             </div>
           </div>
         </div>
@@ -364,6 +367,12 @@ export default function LandingPage() {
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-600">© 2026 G-TECH LAB • TOUS DROITS RÉSERVÉS</p>
         </div>
       </footer>
+
+      <LegalDocsModal 
+        isOpen={isLegalOpen} 
+        onClose={() => setIsLegalOpen(false)} 
+        defaultTab={legalTab} 
+      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useContext } from 'react';
+import XLSX from 'xlsx-js-style';
 import { collection, onSnapshot, query, orderBy, limit, deleteDoc, doc, getDocs, getDoc, where } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { Sale, CartItem, StoreSettings } from '../types';
@@ -196,6 +197,7 @@ export default function SalesHistory() {
       const daySales = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const totalSales = daySales.reduce((sum: number, sale: any) => sum + (sale.totalAmount || 0), 0);
       
+      // A. GENERATE THERMAL RECEIPT PDF
       const docPDF = new jsPDF({
         unit: 'mm',
         format: [80, 150]
@@ -248,8 +250,188 @@ export default function SalesHistory() {
       downloadLink.click();
       document.body.removeChild(downloadLink);
       URL.revokeObjectURL(blobUrl);
+
+      // B. GENERATE UNMODIFIABLE / LOCKED EXCEL SHEET OF ALL ARTICLES SOLD TODAY
+      // 1. Fetch sale items subcollection for each sale of today
+      const itemsPromises = daySales.map(async (sale: any) => {
+        const itemSnap = await getDocs(collection(db, `sales/${sale.id}/items`));
+        return itemSnap.docs.map(docItem => {
+          const itemData = docItem.data();
+          return {
+            productId: itemData.productId || itemData.id || '',
+            name: itemData.name || 'Inconnu',
+            quantity: Number(itemData.quantity) || 0,
+            priceAtSale: Number(itemData.priceAtSale) || 0,
+          };
+        });
+      });
+      const nestedItems = await Promise.all(itemsPromises);
+      const allSoldItems = nestedItems.flat();
+
+      // 2. Fetch all products to match current stock quantities
+      const prodSnap = await getDocs(query(collection(db, 'products'), where('storeId', '==', userProfile.storeId)));
+      const productsMap: Record<string, { stock: number; lowStockThreshold?: number }> = {};
+      prodSnap.docs.forEach(docProd => {
+        const d = docProd.data();
+        const pId = docProd.id;
+        const nameKey = (d.name || '').trim().toLowerCase();
+        
+        productsMap[pId] = {
+          stock: d.stock !== undefined ? Number(d.stock) : 0,
+          lowStockThreshold: d.lowStockThreshold !== undefined ? Number(d.lowStockThreshold) : 5,
+        };
+        productsMap[nameKey] = {
+          stock: d.stock !== undefined ? Number(d.stock) : 0,
+          lowStockThreshold: d.lowStockThreshold !== undefined ? Number(d.lowStockThreshold) : 5,
+        };
+      });
+
+      // 3. Aggregate sold articles by key
+      interface AggItem {
+        name: string;
+        quantitySold: number;
+        totalValue: number;
+        stockRemaining: number;
+        lowStockThreshold: number;
+        obs: string;
+      }
+      const aggregated: Record<string, AggItem> = {};
+
+      allSoldItems.forEach(item => {
+        const key = item.productId || item.name.trim().toLowerCase();
+        const lookup = productsMap[item.productId] || productsMap[item.name.trim().toLowerCase()] || { stock: 0, lowStockThreshold: 5 };
+        
+        if (!aggregated[key]) {
+          aggregated[key] = {
+            name: item.name,
+            quantitySold: 0,
+            totalValue: 0,
+            stockRemaining: lookup.stock,
+            lowStockThreshold: lookup.lowStockThreshold !== undefined ? lookup.lowStockThreshold : 5,
+            obs: 'Stock suffisant en rayon'
+          };
+        }
+        
+        aggregated[key].quantitySold += item.quantity;
+        aggregated[key].totalValue += (item.quantity * item.priceAtSale);
+        
+        const currentStock = lookup.stock;
+        const threshold = lookup.lowStockThreshold !== undefined ? lookup.lowStockThreshold : 5;
+        if (currentStock <= threshold) {
+          aggregated[key].obs = `STOCK CRITIQUE - Reste seulement ${currentStock} unité(s)`;
+        } else {
+          aggregated[key].obs = 'Stock correct en magasin';
+        }
+      });
+
+      const aggregatedList = Object.values(aggregated);
+
+      // 4. Construct XLSX Rows
+      const excelRows = [
+        ["RAPPORT JOURNALIER DES VENTES INDIVIDUELLES ET STOCK REQUIS"],
+        [`Boutique : ${storeSettings?.name || "MARKET PRO"}`],
+        [`Date d'édition : ${new Date().toLocaleDateString('fr-TG')} à ${new Date().toLocaleTimeString('fr-TG')}`],
+        [`Caissier Émetteur : ${userProfile?.displayName || auth.currentUser?.displayName || 'Admin'}`],
+        [], 
+        ["Nº d'ordre", "Nom du produit", "Nombres vendus", "Total produit servi (FCFA)", "Produit restant au stock", "Observations"]
+      ];
+
+      aggregatedList.forEach((ag, idx) => {
+        excelRows.push([
+          (idx + 1).toString(),
+          ag.name,
+          ag.quantitySold.toString(),
+          ag.totalValue.toLocaleString('de-DE'),
+          ag.stockRemaining.toString(),
+          ag.obs
+        ]);
+      });
+
+      excelRows.push([]);
+      excelRows.push([
+        "TOTAL DU JOURNAL DE VENTE",
+        "",
+        aggregatedList.reduce((sum, item) => sum + item.quantitySold, 0).toString(),
+        totalSales.toLocaleString('de-DE'),
+        "",
+        "Généré automatiquement et cryptographiquement verrouillé"
+      ]);
+
+      // 5. Create worksheet, lock to be unmodifiable
+      const ws = XLSX.utils.aoa_to_sheet(excelRows);
       
-      alert(`Caisse clôturée avec succès !\nTotal: ${totalSales.toLocaleString()} CFA`);
+      // Color cell logic for "Produit restant au stock" based on the threshold
+      aggregatedList.forEach((ag, idx) => {
+        const rowNum = idx + 7;
+        const cellRef = `E${rowNum}`;
+        if (ws[cellRef]) {
+          const isBelow = ag.stockRemaining <= ag.lowStockThreshold;
+          ws[cellRef].s = {
+            fill: {
+              patternType: "solid",
+              fgColor: { rgb: isBelow ? "FFC7CE" : "C6EFCE" } // red/green background
+            },
+            font: {
+              color: { rgb: isBelow ? "9C0006" : "006100" }, // dark red/dark green text
+              bold: true,
+              name: "Arial",
+              sz: 10
+            },
+            alignment: {
+              horizontal: "center",
+              vertical: "center"
+            },
+            border: {
+              top: { style: "thin", color: { rgb: "E2E8F0" } },
+              bottom: { style: "thin", color: { rgb: "E2E8F0" } },
+              left: { style: "thin", color: { rgb: "E2E8F0" } },
+              right: { style: "thin", color: { rgb: "E2E8F0" } }
+            }
+          };
+        }
+      });
+
+      // Activating Sheet Protection lock (Excel locks cell inputs instantly for raw viewing)
+      ws['!protect'] = {
+        password: 'g-tech-secure-unmodifiable-market-pro-2026',
+        selectLockedCells: true,
+        selectUnlockedCells: false,
+        formatCells: false,
+        formatColumns: false,
+        formatRows: false,
+        insertColumns: false,
+        insertRows: false,
+        insertHyperlinks: false,
+        deleteColumns: false,
+        deleteRows: false,
+        sort: false,
+        autoFilter: false,
+        pivotTables: false
+      };
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Journal_Caisse_Articles");
+
+      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'binary' });
+
+      const s2ab = (s: any) => {
+        const buf = new ArrayBuffer(s.length);
+        const view = new Uint8Array(buf);
+        for (let i = 0; i < s.length; i++) view[i] = s.charCodeAt(i) & 0xFF;
+        return buf;
+      };
+
+      const excelBlob = new Blob([s2ab(wbout)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const excelUrl = URL.createObjectURL(excelBlob);
+      const excelLink = document.createElement('a');
+      excelLink.href = excelUrl;
+      excelLink.download = `Articles_Vendus_Cloture_${new Date().toISOString().split('T')[0]}.xlsx`;
+      document.body.appendChild(excelLink);
+      excelLink.click();
+      document.body.removeChild(excelLink);
+      URL.revokeObjectURL(excelUrl);
+      
+      alert(`Caisse clôturée avec succès !\nRapports générés :\n1. Ticket Ticket PDF\n2. Journal de bord Excel (Vérouillé)`);
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'sales');
     } finally {

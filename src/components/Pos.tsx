@@ -24,7 +24,9 @@ import {
   Volume2,
   ChevronDown,
   ChevronUp,
-  ScanBarcode
+  ScanBarcode,
+  Share2,
+  ExternalLink
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import BarcodeScannerModal from './BarcodeScannerModal';
@@ -437,8 +439,8 @@ export default function Pos() {
     }, 500);
   };
 
-  const handleDownloadPDF = async () => {
-    if (!lastSaleData) return;
+  const createReceiptPDF = () => {
+    if (!lastSaleData) throw new Error("Aucune donnée de vente disponible");
 
     const docPDF = new jsPDF({
       unit: 'mm',
@@ -454,7 +456,7 @@ export default function Pos() {
     docPDF.setFont('helvetica', 'normal');
     docPDF.text("Reçu de Vente", 40, 20, { align: 'center' });
     docPDF.text(`ID: #${lastSaleData.id.slice(-8).toUpperCase()}`, 40, 24, { align: 'center' });
-    docPDF.text(`Date: ${lastSaleData.date?.toLocaleString() || 'N/A'}`, 40, 28, { align: 'center' });
+    docPDF.text(`Date: ${lastSaleData.date?.toLocaleString() || new Date().toLocaleString()}`, 40, 28, { align: 'center' });
     docPDF.setFont('helvetica', 'bolditalic');
     docPDF.text(`Vendeur: ${userProfile?.displayName || auth.currentUser?.displayName || 'Admin'}`, 40, 32, { align: 'center' });
     
@@ -498,16 +500,78 @@ export default function Pos() {
 
     docPDF.text("Merci de votre visite!", 40, paymentInfoY + 16, { align: 'center' });
 
-    // Robust download using Blob
-    const pdfOutput = docPDF.output('blob');
-    const blobUrl = URL.createObjectURL(pdfOutput);
-    const downloadLink = document.createElement('a');
-    downloadLink.href = blobUrl;
-    downloadLink.download = `Recu_${(lastSaleData.id || 'export').slice(-8)}.pdf`;
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    document.body.removeChild(downloadLink);
-    URL.revokeObjectURL(blobUrl);
+    return docPDF;
+  };
+
+  const handleDownloadPDF = async () => {
+    try {
+      const docPDF = createReceiptPDF();
+      const pdfOutput = docPDF.output('blob');
+      const blobUrl = URL.createObjectURL(pdfOutput);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = blobUrl;
+      downloadLink.download = `Recu_${(lastSaleData!.id || 'export').slice(-8)}.pdf`;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+      URL.revokeObjectURL(blobUrl);
+    } catch (e: any) {
+      console.error(e);
+      alert("Erreur lors du téléchargement : " + e.message);
+    }
+  };
+
+  const handleOpenPDFInNewTab = () => {
+    try {
+      const docPDF = createReceiptPDF();
+      const pdfOutput = docPDF.output('blob');
+      const blobUrl = URL.createObjectURL(pdfOutput);
+      window.open(blobUrl, '_blank');
+    } catch (e: any) {
+      console.error(e);
+      alert("Impossible d'ouvrir le PDF de façon directe. Veuillez autoriser les fenêtres contextuelles.");
+    }
+  };
+
+  const handleSharePDF = async () => {
+    if (!lastSaleData) return;
+    try {
+      const docPDF = createReceiptPDF();
+      const pdfOutput = docPDF.output('blob');
+      const file = new File([pdfOutput], `Recu_${lastSaleData.id.slice(-8).toUpperCase()}.pdf`, { type: 'application/pdf' });
+      
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Reçu #${lastSaleData.id.slice(-8).toUpperCase()}`,
+          text: `Voici le reçu de votre achat d'un montant de ${lastSaleData.total.toLocaleString('de-DE')} FCFA chez ${storeSettings?.name || "MARKET PRO"}.`
+        });
+      } else {
+        // Textual receipt clipboard fallback
+        let receiptText = `=== ${storeSettings?.name || "MARKET PRO"} ===\n`;
+        receiptText += `Reçu de Vente #${lastSaleData.id.slice(-8).toUpperCase()}\n`;
+        receiptText += `Date: ${lastSaleData.date?.toLocaleString() || new Date().toLocaleString()}\n`;
+        receiptText += `------------------------------------\n`;
+        lastSaleData.items.forEach(item => {
+          receiptText += `${item.name} x${item.quantity} : ${((item.priceAtSale || 0) * (item.quantity || 0)).toLocaleString('de-DE')} FCFA\n`;
+        });
+        receiptText += `------------------------------------\n`;
+        receiptText += `SOUS-TOTAL: ${((lastSaleData.total || 0) + (lastSaleData.discount || 0)).toLocaleString('de-DE')} FCFA\n`;
+        if (lastSaleData.discount) {
+          receiptText += `REMISE: -${(lastSaleData.discount || 0).toLocaleString('de-DE')} FCFA\n`;
+        }
+        receiptText += `TOTAL: ${(lastSaleData.total || 0).toLocaleString('de-DE')} FCFA\n`;
+        receiptText += `Paiement: ${paymentMethod.toUpperCase()}\n`;
+        receiptText += `Rendu: ${(lastSaleData.change || 0).toLocaleString('de-DE')} FCFA\n`;
+        receiptText += `Merci de votre visite !\n`;
+
+        await navigator.clipboard.writeText(receiptText);
+        alert("Reçu textuel copié avec succès ! Vous pouvez le coller dans WhatsApp ou un SMS.");
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert("Erreur de partage: " + e.message);
+    }
   };
 
 
@@ -892,7 +956,7 @@ export default function Pos() {
       </div>
 
       {/* Cart Side */}
-      <div className="w-full lg:w-[480px] xl:w-[545px] flex flex-col bg-white rounded-[32px] border border-gray-100 shadow-lg shrink-0 overflow-hidden min-h-[450px] lg:h-full transition-all">
+      <div id="cart-side-section" className="w-full lg:w-[480px] xl:w-[545px] flex flex-col bg-white rounded-[32px] border border-gray-100 shadow-lg shrink-0 overflow-hidden min-h-[450px] lg:h-full transition-all">
         <div className="p-6 bg-gray-900 text-white">
           <div className="flex items-center gap-2 mb-2">
             <ShoppingCart size={20} className="text-orange-500" />
@@ -1184,29 +1248,50 @@ export default function Pos() {
                     <h2 className="text-3xl font-black mb-1.5 tracking-tight italic uppercase decoration-green-500 decoration-6 underline-offset-6">Terminé !</h2>
                     <p className="text-white/40 font-bold text-[9px] uppercase tracking-widest mb-8">Transaction #{lastSaleId.slice(-8).toUpperCase()}</p>
                     
-                    <div className="grid grid-cols-2 gap-3.5 w-full mb-4">
+                    <div className="grid grid-cols-2 gap-3 w-full mb-3.5">
                       <button 
                         onClick={handlePrint}
-                        className="flex items-center justify-center gap-2.5 py-4 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all border border-white/5"
+                        className="flex flex-col items-center justify-center gap-1.5 py-3 bg-white/5 hover:bg-white/10 text-white rounded-2xl font-black uppercase tracking-widest text-[9px] transition-all border border-white/5"
+                        title="Imprimer un reçu physique"
                       >
                         <Printer size={16} className="text-orange-500" />
-                        Ticket
+                        <span>Imprimer</span>
                       </button>
+                      
                       <button 
                         onClick={handleDownloadPDF}
-                        className="flex items-center justify-center gap-2.5 py-4 bg-white text-gray-900 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all hover:bg-gray-100 shadow-2xl"
+                        className="flex flex-col items-center justify-center gap-1.5 py-3 bg-white text-gray-900 rounded-2xl font-black uppercase tracking-widest text-[9px] transition-all hover:bg-gray-100 shadow-xl"
+                        title="Télécharger le fichier PDF"
                       >
                         <FileDown size={16} className="text-blue-600" />
-                        PDF
+                        <span>Télécharger</span>
+                      </button>
+
+                      <button 
+                        onClick={handleOpenPDFInNewTab}
+                        className="flex flex-col items-center justify-center gap-1.5 py-3 bg-white/5 hover:bg-white/10 text-white rounded-2xl font-black uppercase tracking-widest text-[9px] transition-all border border-white/5"
+                        title="Ouvrir le reçu dans un nouvel onglet"
+                      >
+                        <ExternalLink size={16} className="text-amber-500" />
+                        <span>Aperçu PDF</span>
+                      </button>
+
+                      <button 
+                        onClick={handleSharePDF}
+                        className="flex flex-col items-center justify-center gap-1.5 py-3 bg-white/5 hover:bg-white/10 text-white rounded-2xl font-black uppercase tracking-widest text-[9px] transition-all border border-white/5"
+                        title="Partager le reçu via le canevas de partage natif ou copie-presse"
+                      >
+                        <Share2 size={16} className="text-purple-400" />
+                        <span>Partager</span>
                       </button>
                     </div>
 
                     {lastSaleData?.clientPhone && (
                       <button 
                          onClick={handleWhatsAppShare}
-                         className="w-full flex items-center justify-center gap-2.5 py-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all shadow-xl shadow-emerald-500/20"
+                         className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-black uppercase tracking-widest text-[9px] transition-all shadow-xl shadow-emerald-500/20"
                       >
-                        <MessageSquare size={16} />
+                        <MessageSquare size={14} />
                         Envoyer par WhatsApp
                       </button>
                     )}
@@ -1476,6 +1561,23 @@ export default function Pos() {
         </>
       )}
     </div>
+
+    {/* Floating Mobile Cart Shortcut Badge */}
+    {cart.length > 0 && (
+      <button 
+        onClick={() => {
+          const el = document.getElementById('cart-side-section');
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }}
+        className="lg:hidden fixed bottom-6 right-6 z-40 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-full px-5 py-3.5 shadow-2xl flex items-center gap-2 font-black text-xs uppercase tracking-widest animate-bounce border border-orange-400/30"
+      >
+        <ShoppingCart size={15} className="text-white shrink-0 animate-pulse" />
+        <span>Panier ({cart.reduce((acc, curr) => acc + curr.quantity, 0)}) • {total.toLocaleString('de-DE')} F</span>
+        <ArrowRight size={13} className="text-white shrink-0" />
+      </button>
+    )}
     </div>
   );
 }

@@ -231,29 +231,123 @@ export default function Chat() {
     const storeIdToUse = userProfile?.storeId || settings?.id;
     if (!isSuperAdmin && !storeIdToUse) return;
 
-    const q = isSuperAdmin
-      ? query(collection(db, 'users'))
-      : query(collection(db, 'users'), where('storeId', '==', storeIdToUse));
+    const unsubscribes: (() => void)[] = [];
 
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const list = snap.docs.map(doc => {
-        const data = doc.data();
-        return {
-          uid: doc.id,
-          storeId: data.storeId || '',
-          displayName: data.displayName || 'Utilisateur',
-          email: data.email || '',
-          role: data.role || 'cashier'
-        } as ChatUser;
+    if (isSuperAdmin) {
+      const q = query(collection(db, 'users'));
+      const unsubscribe = onSnapshot(q, (snap) => {
+        const list = snap.docs.map(doc => {
+          const data = doc.data();
+          return {
+            uid: doc.id,
+            storeId: data.storeId || '',
+            displayName: data.displayName || 'Utilisateur',
+            email: data.email || '',
+            role: data.role || 'cashier'
+          } as ChatUser;
+        });
+        setUsers(list);
+      }, (err) => {
+        console.error("Error reading user profiles for superadmin:", err);
       });
-      
-      // Filter list for view
-      setUsers(list);
-    }, (err) => {
-      console.error("Error reading user profiles", err);
-    });
-    return () => unsubscribe();
-  }, [currentUser, userProfile?.storeId, settings?.id, isSuperAdmin]);
+      unsubscribes.push(unsubscribe);
+    } else {
+      let storeUsersList: ChatUser[] = [];
+      let superAdminsList: ChatUser[] = [];
+
+      const handleMergeUsers = () => {
+        const seen = new Set<string>();
+        const merged: ChatUser[] = [];
+        [...storeUsersList, ...superAdminsList].forEach(u => {
+          if (!seen.has(u.uid)) {
+            seen.add(u.uid);
+            merged.push(u);
+          }
+        });
+        setUsers(merged);
+      };
+
+      const qStore = query(collection(db, 'users'), where('storeId', '==', storeIdToUse));
+      const unsubStore = onSnapshot(qStore, (snap) => {
+        storeUsersList = snap.docs.map(doc => {
+          const data = doc.data();
+          return {
+            uid: doc.id,
+            storeId: data.storeId || '',
+            displayName: data.displayName || 'Utilisateur',
+            email: data.email || '',
+            role: data.role || 'cashier'
+          } as ChatUser;
+        });
+        handleMergeUsers();
+      }, (err) => {
+        console.error("Error reading store user profiles", err);
+      });
+      unsubscribes.push(unsubStore);
+
+      // Only boutique admins (role === 'admin') can view/message super-admins
+      if (userProfile?.role === 'admin') {
+        const qSuper = query(collection(db, 'users'), where('role', '==', 'super-admin'));
+        const unsubSuper = onSnapshot(qSuper, (snap) => {
+          superAdminsList = snap.docs.map(doc => {
+            const data = doc.data();
+            return {
+              uid: doc.id,
+              storeId: 'global',
+              displayName: data.displayName || 'Super Admin',
+              email: data.email || '',
+              role: 'super-admin'
+            } as ChatUser;
+          });
+          
+          // Ensure we have at least virtual entries in case query returns empty
+          if (superAdminsList.length === 0) {
+            superAdminsList = [
+              {
+                uid: 'superadmin_gildas',
+                storeId: 'global',
+                displayName: 'Gildas (Super Admin)',
+                email: 'gildas@gmail.com',
+                role: 'super-admin'
+              },
+              {
+                uid: 'superadmin_anges',
+                storeId: 'global',
+                displayName: 'Anges Gildas (Super Admin)',
+                email: 'anges.gildas@gmail.com',
+                role: 'super-admin'
+              }
+            ];
+          }
+          handleMergeUsers();
+        }, (err) => {
+          console.warn("Could not query super admins, using fallback:", err);
+          superAdminsList = [
+            {
+              uid: 'superadmin_gildas',
+              storeId: 'global',
+              displayName: 'Gildas (Super Admin)',
+              email: 'gildas@gmail.com',
+              role: 'super-admin'
+            },
+            {
+              uid: 'superadmin_anges',
+              storeId: 'global',
+              displayName: 'Anges Gildas (Super Admin)',
+              email: 'anges.gildas@gmail.com',
+              role: 'super-admin'
+            }
+          ];
+          handleMergeUsers();
+        });
+        unsubscribes.push(unsubSuper);
+      }
+    }
+
+    return () => {
+      unsubscribes.forEach(unsub => unsub());
+    };
+  }, [currentUser, userProfile?.storeId, userProfile?.role, settings?.id, isSuperAdmin]);
 
   // Subscribe to Chat messages in real time
   useEffect(() => {
@@ -396,6 +490,14 @@ export default function Chat() {
   const myStoreUsers = users.filter(u => {
     if (u.uid === currentUser?.uid) return false; // hide myself
     if (isSuperAdmin) return true; // super admin can DM anyone
+    
+    // Is target super admin?
+    const isTargetSuperAdmin = u.email === 'gildas@gmail.com' || u.email === 'anges.gildas@gmail.com' || u.role === 'super-admin' || u.storeId === 'global';
+    if (isTargetSuperAdmin) {
+      // Only boutique admins (role === 'admin') can see/message the super-admin
+      return userProfile?.role === 'admin';
+    }
+    
     return u.storeId === localStoreId; // normal users can only DM their teammates
   });
 
@@ -427,6 +529,14 @@ export default function Chat() {
         payload.storeId = 'broadcast';
       } else if (activeTab === 'direct') {
         if (!activeRecipient) return;
+        
+        // Prevent non-admin users from messaging super admins
+        const isTargetSuperAdmin = activeRecipient.email === 'gildas@gmail.com' || activeRecipient.email === 'anges.gildas@gmail.com' || activeRecipient.role === 'super-admin' || activeRecipient.storeId === 'global';
+        if (isTargetSuperAdmin && userProfile?.role !== 'admin' && !isSuperAdmin) {
+          setErrorMessage("Seul l'administrateur de la boutique est autorisé à envoyer des messages au Super Administrateur.");
+          return;
+        }
+
         payload.storeId = localStoreId;
         payload.recipientId = activeRecipient.uid;
       } else {

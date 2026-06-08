@@ -17,6 +17,7 @@ import {
   SmartphoneNfc
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
+import LegalDocsModal from './LegalDocsModal';
 import { 
   createUserWithEmailAndPassword, 
   updateProfile, 
@@ -112,6 +113,9 @@ export default function Register() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [isLegalOpen, setIsLegalOpen] = useState(false);
+  const [legalTab, setLegalTab] = useState<'cgu' | 'privacy'>('cgu');
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const navigate = useNavigate();
 
   // Form State
@@ -162,6 +166,10 @@ export default function Register() {
   const currentCountry = countries.find(c => c.code === formData.country);
 
   const handleSubmit = async () => {
+    if (!termsAccepted) {
+      alert("Veuillez accepter les Conditions d'Utilisation et la Politique de Confidentialité régies au Togo avant de poursuivre l'inscription.");
+      return;
+    }
     setLoading(true);
     try {
       // 1. Create Auth User
@@ -539,6 +547,36 @@ export default function Register() {
                     </motion.div>
                   )}
 
+                  {/* Togolese GDPR & Legal Terms Acceptance check */}
+                  <div className="flex items-start gap-3 p-4 bg-slate-50 border border-slate-100/85 rounded-[24px] mt-4 select-none">
+                    <input 
+                      type="checkbox" 
+                      id="accept-togo-terms"
+                      checked={termsAccepted}
+                      onChange={(e) => setTermsAccepted(e.target.checked)}
+                      className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-0 cursor-pointer"
+                    />
+                    <label htmlFor="accept-togo-terms" className="text-[10px] font-bold text-slate-500 leading-normal cursor-pointer text-left select-none">
+                      En cochant cette case, j'accepte les{' '}
+                      <button 
+                        type="button"
+                        onClick={() => { setLegalTab('cgu'); setIsLegalOpen(true); }}
+                        className="text-orange-500 hover:underline hover:text-orange-600 font-extrabold"
+                      >
+                        Conditions Générales d'Utilisation
+                      </button>{' '}
+                      et la{' '}
+                      <button 
+                        type="button"
+                        onClick={() => { setLegalTab('privacy'); setIsLegalOpen(true); }}
+                        className="text-orange-500 hover:underline hover:text-orange-600 font-extrabold"
+                      >
+                        Politique de Confidentialité
+                      </button>{' '}
+                      applicables en République du Togo.
+                    </label>
+                  </div>
+
                   <div className="flex gap-4 pt-4">
                     <button 
                       onClick={() => setStep(1)}
@@ -572,6 +610,12 @@ export default function Register() {
           </div>
         </div>
       </motion.div>
+
+      <LegalDocsModal 
+        isOpen={isLegalOpen} 
+        onClose={() => setIsLegalOpen(false)} 
+        defaultTab={legalTab} 
+      />
     </div>
   );
 }
