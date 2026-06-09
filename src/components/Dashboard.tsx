@@ -33,7 +33,11 @@ import {
   Tooltip, 
   ResponsiveContainer,
   AreaChart,
-  Area
+  Area,
+  PieChart,
+  Pie,
+  Cell,
+  Legend
 } from 'recharts';
 
 const data = [
@@ -47,25 +51,54 @@ const data = [
 ];
 
 function StatCard({ title, value, icon: Icon, trend, trendValue }: any) {
+  // Map title to premium gradients as requested
+  let gradient = "from-[#6EA8FF] to-[#4F8CFF]"; // Default Earnings Blue
+  const lowercaseTitle = title.toLowerCase();
+  
+  if (lowercaseTitle.includes("ventes") || lowercaseTitle.includes("total ventes") || lowercaseTitle.includes("chiffre d'affaires") || lowercaseTitle.includes("système") || lowercaseTitle.includes("utilisateurs")) {
+    gradient = "from-[#FFE082] to-[#FFC107]"; // Revenue Amber & System Users (Orange / Amber)
+  } else if (lowercaseTitle.includes("commandes") || lowercaseTitle.includes("suspendues")) {
+    gradient = "from-[#FF8A80] to-[#EF4444]"; // Orders Red
+  } else if (lowercaseTitle.includes("produits") || lowercaseTitle.includes("actives") || lowercaseTitle.includes("boutiques")) {
+    gradient = "from-[#7AE582] to-[#22C55E]"; // Products & Active Boutiques (Green)
+  } else if (lowercaseTitle.includes("clients")) {
+    gradient = "from-[#6EA8FF] to-[#4F8CFF]"; // Earnings Blue
+  }
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm"
+      whileHover={{ scale: 1.02 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      className={`relative min-h-[135px] p-5 rounded-[20px] bg-gradient-to-br ${gradient} text-white shadow-[0_8px_30px_rgba(0,0,0,0.05)] overflow-hidden flex flex-col justify-between`}
     >
-      <div className="flex justify-between items-start mb-4">
-        <div className="p-3 bg-gray-50 rounded-2xl">
-          <Icon size={24} className="text-gray-900" />
+      {/* Wave Patterns */}
+      <div className="absolute inset-0 pointer-events-none opacity-20 mix-blend-overlay">
+        <svg className="absolute right-0 bottom-0 h-full w-full" viewBox="0 0 120 120" preserveAspectRatio="none">
+          <path d="M0,90 C30,120 70,60 120,90 L120,120 L0,120 Z" fill="currentColor"></path>
+          <path d="M0,60 C40,80 80,40 120,70 L120,120 L0,120 Z" fill="currentColor" opacity="0.4"></path>
+        </svg>
+      </div>
+
+      <div className="flex justify-between items-start z-10 relative">
+        <p className="text-xs font-semibold tracking-wider opacity-90 uppercase">{title}</p>
+        <div className="p-2 bg-white/10 backdrop-blur-md rounded-xl">
+          <Icon size={18} className="text-white" />
         </div>
+      </div>
+
+      <div className="flex justify-between items-end mt-4 z-10 relative">
+        <h3 className="text-[40px] leading-none font-black tracking-tighter text-white">
+          {value}
+        </h3>
         {trend && (
-          <div className={`flex items-center gap-1 text-sm font-medium ${trend === 'up' ? 'text-green-600' : 'text-red-600'}`}>
+          <div className="flex items-center gap-0.5 text-xs font-bold bg-white/15 px-2 py-1 rounded-lg backdrop-blur-md text-white">
             {trendValue}%
-            {trend === 'up' ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+            {trend === 'up' ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
           </div>
         )}
       </div>
-      <p className="text-sm text-gray-500 font-medium mb-1">{title}</p>
-      <h3 className="text-3xl font-bold tracking-tight text-gray-900">{value}</h3>
     </motion.div>
   );
 }
@@ -709,8 +742,8 @@ export default function Dashboard() {
               <AreaChart data={chartData}>
                 <defs>
                   <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f97316" stopOpacity={0.1}/>
-                    <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#4F8CFF" stopOpacity={0.15}/>
+                    <stop offset="95%" stopColor="#4F8CFF" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
@@ -737,7 +770,7 @@ export default function Dashboard() {
                 <Area 
                   type="monotone" 
                   dataKey="sales" 
-                  stroke="#f97316" 
+                  stroke="#4F8CFF" 
                   strokeWidth={3}
                   fillOpacity={1} 
                   fill="url(#colorSales)" 
@@ -747,36 +780,110 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm flex flex-col">
-          <h3 className="text-xl font-bold text-gray-900 mb-6 font-mono uppercase tracking-tighter">Alertes Critiques</h3>
-          <div className="flex-1 space-y-4">
-            {alerts.length > 0 ? alerts.map((alert, i) => (
-              <div key={`dashboard-alert-${i}-${alert.name}`} className={`flex items-center justify-between p-4 rounded-2xl border ${alert.alertType === 'expiry' ? 'bg-red-50 border-red-100' : 'bg-orange-50 border-orange-100'}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${alert.alertType === 'expiry' ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'}`}>
-                    <Package size={20} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-black text-gray-900 truncate max-w-[120px]">{alert.name}</h4>
-                    <p className={`text-[10px] font-bold uppercase tracking-widest ${alert.alertType === 'expiry' ? 'text-red-500' : 'text-orange-500'}`}>
-                      {alert.alertType === 'expiry' ? `Expire: ${new Date(alert.expiryDate).toLocaleDateString()}` : `Stock: ${alert.stock} ${alert.unit}`}
-                    </p>
-                  </div>
-                </div>
+        <div className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm flex flex-col justify-between">
+          <div>
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Analyse KPI & Objectifs</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Distribution réelle de performance</p>
               </div>
-            )) : (
-              <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                <div className="w-16 h-16 bg-green-50 text-green-500 rounded-full flex items-center justify-center mb-4">
-                   <TrendingUp size={32} />
-                </div>
-                <p className="text-sm font-bold text-gray-900">Tout est sous contrôle</p>
-                <p className="text-xs text-gray-500">Aucune alerte pour le moment.</p>
+              <div className="p-2 bg-[#F0F6FF] text-[#4F8CFF] rounded-xl">
+                <Target size={18} />
               </div>
+            </div>
+
+            {/* Performance KPI Chart */}
+            <div className="h-[210px] flex items-center justify-center relative">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={isSuperAdmin ? [
+                      { name: 'Actives', value: stats.activeStores || 1 },
+                      { name: 'Suspendues', value: stats.suspendedStores || 0 },
+                      { name: 'En attente', value: Math.max(0, stats.totalStores - stats.activeStores - stats.suspendedStores) }
+                    ] : [
+                      { name: 'Réalisé', value: Math.min(stats.totalSales, salesGoal) || 1 },
+                      { name: 'Reste à faire', value: Math.max(0, salesGoal - stats.totalSales) }
+                    ]}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={65}
+                    outerRadius={85}
+                    paddingAngle={3}
+                    dataKey="value"
+                  >
+                    {(isSuperAdmin ? [
+                      { color: '#22C55E' },
+                      { color: '#EF4444' },
+                      { color: '#4F8CFF' }
+                    ] : [
+                      { color: '#4F8CFF' },
+                      { color: '#FFC107' }
+                    ]).map((entry, idx) => (
+                      <Cell key={`cell-${idx}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip 
+                    formatter={(value: any) => [`${value.toLocaleString('de-DE')}`, 'Valeur']}
+                    contentStyle={{ 
+                      backgroundColor: '#111827', 
+                      border: 'none', 
+                      borderRadius: '12px',
+                      color: '#fff',
+                      fontSize: '11px'
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              {/* Center value overlay */}
+              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex flex-col items-center justify-center text-center pointer-events-none">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none">
+                  {isSuperAdmin ? "Boutiques" : "Atteint"}
+                </span>
+                <span className="text-[22px] font-black text-[#111827] mt-1">
+                  {isSuperAdmin ? stats.totalStores : `${Math.round(Math.min(100, (stats.totalSales / (salesGoal || 1)) * 100))}%`}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 pt-6 border-t border-[#EAECEF] space-y-3.5">
+            {isSuperAdmin ? (
+              <>
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#22C55E]" />
+                    <span className="text-[#6B7280]">Boutiques Actives</span>
+                  </div>
+                  <span className="text-[#111827] font-bold">{stats.activeStores}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#EF4444]" />
+                    <span className="text-[#6B7280]">Suspendues</span>
+                  </div>
+                  <span className="text-[#111827] font-bold">{stats.suspendedStores}</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#4F8CFF]" />
+                    <span className="text-[#6B7280]">Ventes Réalisées</span>
+                  </div>
+                  <span className="text-[#111827] font-extrabold">{stats.totalSales.toLocaleString('de-DE')} FCFA</span>
+                </div>
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#FFC107]" />
+                    <span className="text-[#6B7280]">Objectif Restant</span>
+                  </div>
+                  <span className="text-[#111827] font-extrabold">{Math.max(0, salesGoal - stats.totalSales).toLocaleString('de-DE')} FCFA</span>
+                </div>
+              </>
             )}
           </div>
-          <button className="mt-8 w-full py-4 bg-gray-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-black transition-colors">
-            Gérer l'inventaire
-          </button>
         </div>
       </div>
     </div>

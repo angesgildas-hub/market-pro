@@ -383,16 +383,16 @@ function UserHeader({ isLicenseValid }: { isLicenseValid: boolean }) {
   };
 
   return (
-    <header className="fixed top-0 right-0 left-0 lg:left-64 h-20 lg:h-24 bg-white/80 backdrop-blur-md z-30 px-4 sm:px-6 lg:px-12 flex items-center justify-between border-b border-gray-100 print:hidden pl-20 lg:pl-12">
+    <header className="fixed top-0 right-0 left-0 lg:left-[280px] h-20 bg-white/90 backdrop-blur-md z-30 px-6 sm:px-8 lg:px-10 flex items-center justify-between border-b border-[#EAECEF] print:hidden pl-20 lg:pl-10">
        <div className="flex-1 max-w-sm mr-8">
           <div className="relative group">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-orange-500 transition-colors" size={18} />
+            <Search className="absolute left-4.5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#4F8CFF] transition-colors" size={16} />
             <input 
               type="text" 
               placeholder="Rechercher..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-12 pr-6 py-3 bg-gray-50 border-2 border-transparent rounded-2xl focus:bg-white focus:border-orange-500/20 transition-all outline-none font-medium text-sm"
+              className="w-full pl-12 pr-6 h-11 bg-[#F5F7FB] border border-[#E5E7EB] rounded-full focus:bg-white focus:border-[#4F8CFF] focus:ring-[4px] focus:ring-[#4F8CFF]/15 transition-all outline-none font-medium text-sm text-[#111827]"
             />
           </div>
        </div>
@@ -581,18 +581,18 @@ function UserHeader({ isLicenseValid }: { isLicenseValid: boolean }) {
              <p className="text-lg font-mono font-black text-gray-900 leading-none">{formatTime(time)}</p>
           </div>
           <div className="w-px h-10 bg-gray-100 hidden md:block" />
-          <Link to="/settings?tab=profile" className="flex items-center gap-4 group hover:opacity-80 transition-opacity">
+          <Link to="/settings?tab=profile" className="flex items-center gap-4 group hover:opacity-85 transition-all">
             <div className="text-right hidden sm:block">
-               <p className="text-sm font-black text-gray-900">{userProfile?.displayName || user?.displayName}</p>
-               <p className="text-[10px] text-orange-500 font-bold uppercase tracking-widest leading-none">Connecté</p>
+               <p className="text-sm font-extrabold text-[#111827]">{userProfile?.displayName || user?.displayName}</p>
+               <p className="text-[10px] text-[#4F8CFF] font-bold uppercase tracking-widest leading-none mt-0.5">En Ligne</p>
             </div>
-            <div className="w-11 h-11 rounded-2xl bg-gray-100 border-2 border-white shadow-xl shadow-gray-200/50 flex items-center justify-center overflow-hidden group-hover:scale-105 transition-transform cursor-pointer">
+            <div className="w-11 h-11 rounded-full bg-slate-100 border-2 border-white shadow-[0_4px_12px_rgba(79,140,255,0.15)] flex items-center justify-center overflow-hidden group-hover:scale-105 transition-transform cursor-pointer">
                {userProfile?.photoURL ? (
                  <img src={userProfile.photoURL} referrerPolicy="no-referrer" alt="" className="w-full h-full object-cover" />
                ) : user?.photoURL ? (
                  <img src={user.photoURL} referrerPolicy="no-referrer" alt="" className="w-full h-full object-cover" />
                ) : (
-                 <User size={22} className="text-gray-400" />
+                 <User size={20} className="text-gray-400" />
                )}
             </div>
           </Link>
@@ -656,51 +656,53 @@ function Sidebar() {
       </button>
 
       <aside className={`
-        fixed inset-y-0 left-0 bg-[#151619] text-white w-72 lg:w-64 transform transition-transform duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] z-40 flex flex-col shadow-2xl
+        fixed inset-y-0 left-0 bg-[#FFFFFF] border-r border-[#EAECEF] w-[280px] transform transition-transform duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] z-40 flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)]
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
         <div className="p-8 shrink-0">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-orange-500 w-10 h-10 rounded-xl shadow-lg shadow-orange-500/20 overflow-hidden flex items-center justify-center">
+          <div className="flex items-center gap-3.5 mb-2">
+            <div className="bg-[#F0F6FF] border border-[#4F8CFF]/20 w-11 h-11 rounded-[14px] shadow-sm overflow-hidden flex items-center justify-center">
               {settings?.logoUrl ? (
                 <img src={settings.logoUrl} alt="Logo" className="w-full h-full object-cover" />
               ) : (
-                <ShoppingBag size={22} className="text-white" />
+                <ShoppingBag size={22} className="text-[#4F8CFF]" />
               )}
             </div>
-            <span className="text-xl font-black tracking-tight">{t.app_name}</span>
+            <div className="flex flex-col">
+              <span className="text-[15px] font-extrabold tracking-tight text-[#111827]">{t.app_name}</span>
+              <span className="text-[9px] font-black uppercase text-[#6B7280] tracking-widest">{settings?.subdomain || 'Market Pro OS'}</span>
+            </div>
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-4 py-2 space-y-1">
-          {filteredItems.map((item) => (
-            <Link
-              key={`nav-item-${item.id}`}
-              to={item.path}
-              onClick={() => setIsMobileMenuOpen(false)}
-              className={`
-                flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200
-                ${location.pathname === item.path && item.id !== 'profile' 
-                  ? 'bg-white/10 text-orange-500 font-black' 
-                  : item.id === 'profile' && location.pathname === '/settings'
-                    ? 'text-gray-400 hover:text-white hover:bg-white/5'
-                    : location.pathname === item.path
-                      ? 'bg-white/10 text-orange-500 font-black'
-                      : 'text-gray-500 hover:text-white hover:bg-white/5'}
-              `}
-            >
-              <item.icon size={20} className={location.pathname === item.path ? 'text-orange-500' : ''} />
-              <span className="text-sm tracking-wide">{item.label}</span>
-            </Link>
-          ))}
+        <nav className="flex-1 overflow-y-auto px-5 py-3 space-y-1.5">
+          {filteredItems.map((item) => {
+            const isActive = location.pathname === item.path || (item.id === 'settings' && location.pathname.startsWith('/settings'));
+            return (
+              <Link
+                key={`nav-item-${item.id}`}
+                to={item.path}
+                onClick={() => setIsMobileMenuOpen(false)}
+                className={`
+                  flex items-center gap-3.5 px-4.5 py-3 rounded-[18px] transition-all duration-300 border
+                  ${isActive 
+                    ? 'bg-[#F0F6FF] border-[#4F8CFF] text-[#4F8CFF] font-bold shadow-[0_2px_10px_rgba(79,140,255,0.08)]' 
+                    : 'bg-transparent border-transparent text-[#6B7280] hover:text-[#111827] hover:bg-[#F5F7FB]'}
+                `}
+              >
+                <item.icon size={20} className={isActive ? 'text-[#4F8CFF]' : 'text-[#6B7280]'} />
+                <span className="text-[13px] tracking-wide font-medium">{item.label}</span>
+              </Link>
+            );
+          })}
         </nav>
 
-        <div className="p-4 border-t border-white/5 shrink-0">
+        <div className="p-5 border-t border-[#EAECEF] shrink-0 bg-[#F9FAFB]">
           <button 
             onClick={handleLogout}
-            className="flex items-center gap-2 w-full px-4 py-2 text-gray-500 hover:text-red-400 hover:bg-red-400/5 rounded-xl transition-all font-black text-[9px] uppercase tracking-widest"
+            className="flex items-center justify-center gap-2.5 w-full py-3 px-4 bg-red-50 hover:bg-red-100 text-red-600 rounded-[14px] transition-all font-bold text-[11px] uppercase tracking-wider"
           >
-            <LogOut size={14} />
+            <LogOut size={15} />
             {t.logout}
           </button>
         </div>
@@ -835,11 +837,11 @@ function AppRoutes({
   const isPosPage = location.pathname === '/pos';
 
   return (
-    <div className={`min-h-screen flex selection:bg-orange-500 selection:text-white theme-${theme} ${theme === 'black' ? 'bg-black' : theme === 'dark-blue' ? 'bg-[#0a192f]' : theme === 'light-blue' ? 'bg-sky-50' : 'bg-[#f2f2f2]'}`}>
+    <div className="min-h-screen flex bg-[#F5F7FB] selection:bg-[#4F8CFF] selection:text-white font-sans text-[#111827]">
       <Sidebar />
-      <div className="flex-1 lg:ml-64 flex flex-col">
+      <div className="flex-1 lg:ml-[280px] flex flex-col">
         <UserHeader isLicenseValid={isLicenseValid} />
-        <main className={`flex-1 p-4 ${isPosPage ? 'sm:p-6 lg:p-8 pt-24 lg:pt-[106px] lg:pb-4' : 'sm:p-6 lg:p-12 pt-28 lg:pt-36'}`}>
+        <main className={`flex-1 p-4 ${isPosPage ? 'sm:p-6 lg:p-8 pt-24 lg:pt-[106px] lg:pb-4' : 'sm:p-6 lg:p-10 pt-28 lg:pt-32'}`}>
           <AnimatePresence mode="wait">
             <Routes location={location}>
               <Route path="/" element={<PageTransition><Dashboard /></PageTransition>} />

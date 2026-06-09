@@ -202,13 +202,13 @@ export default function LandingPage() {
       </section>
 
       {/* Features Section */}
-      <section className="py-24 px-6 lg:px-12 bg-slate-900 text-white rounded-[64px] lg:mx-6 mb-24 overflow-hidden relative">
-        <div className="absolute top-0 right-0 w-1/3 h-1/3 bg-orange-500/10 blur-[100px]" />
+      <section className="py-24 px-6 lg:px-12 max-w-7xl mx-auto mb-24 relative">
+        <div className="absolute top-0 right-0 w-1/3 h-1/3 bg-orange-500/5 blur-[100px]" />
         
-        <div className="max-w-7xl mx-auto relative z-10">
+        <div className="relative z-10 w-full">
           <div className="text-center mb-20">
-            <h2 className="text-4xl lg:text-5xl font-black mb-6 italic">Fonctionnalités Clés</h2>
-            <p className="text-slate-400 max-w-2xl mx-auto font-medium">Tout ce dont vous avez besoin pour piloter votre entreprise d'une main de maître en un seul endroit.</p>
+            <h2 className="text-4xl lg:text-5xl font-black mb-6 italic text-slate-900">Fonctionnalités Clés</h2>
+            <p className="text-slate-500 max-w-2xl mx-auto font-medium">Tout ce dont vous avez besoin pour piloter votre entreprise d'une main de maître en un seul endroit.</p>
           </div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -219,13 +219,13 @@ export default function LandingPage() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: idx * 0.1 }}
-                className="bg-white/5 backdrop-blur-xl p-8 rounded-[40px] border border-white/10 hover:bg-white/10 transition-all group"
+                className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm hover:shadow-xl transition-all group"
               >
-                <div className={`${feature.color} w-16 h-16 rounded-2xl flex items-center justify-center mb-8 shadow-2xl group-hover:scale-110 transition-transform`}>
+                <div className={`${feature.color} w-16 h-16 rounded-2xl flex items-center justify-center mb-8 shadow-md group-hover:scale-110 transition-transform`}>
                   <feature.icon className="text-white" size={28} />
                 </div>
-                <h3 className="text-2xl font-bold mb-4">{feature.title}</h3>
-                <p className="text-slate-400 leading-relaxed font-sans">{feature.description}</p>
+                <h3 className="text-2xl font-bold mb-4 text-slate-900">{feature.title}</h3>
+                <p className="text-slate-500 leading-relaxed font-sans">{feature.description}</p>
               </motion.div>
             ))}
           </div>
@@ -334,7 +334,7 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="bg-slate-900 text-white py-20 px-6 lg:px-12">
+      <footer className="bg-white text-slate-900 py-20 px-6 lg:px-12 border-t border-gray-100">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-12">
           <div>
             <div className="flex items-center gap-3 mb-6">
@@ -345,26 +345,26 @@ export default function LandingPage() {
                   <ShoppingBag size={20} className="text-white" />
                 )}
               </div>
-              <span className="text-xl font-black tracking-tight italic uppercase">{storeSettings?.name || 'MARKET PRO'}</span>
+              <span className="text-xl font-black tracking-tight italic uppercase text-slate-900">{storeSettings?.name || 'MARKET PRO'}</span>
             </div>
-            <p className="text-slate-400 text-sm max-w-xs font-sans">Propulsé par G-TECH LAB. Solutions logicielles intelligentes pour l'Afrique de demain.</p>
+            <p className="text-slate-500 text-sm max-w-xs font-sans">Propulsé par G-TECH LAB. Solutions logicielles intelligentes pour l'Afrique de demain.</p>
           </div>
           
           <div className="flex gap-12">
             <div className="flex flex-col gap-4">
-               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Produit</span>
-               <a href="#" className="text-sm font-medium hover:text-orange-500 transition-colors">Tarifs</a>
-               <a href="#" className="text-sm font-medium hover:text-orange-500 transition-colors">Support</a>
+               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Produit</span>
+               <a href="#" className="text-sm font-bold text-slate-700 hover:text-orange-500 transition-colors">Tarifs</a>
+               <a href="#" className="text-sm font-bold text-slate-700 hover:text-orange-500 transition-colors">Support</a>
             </div>
             <div className="flex flex-col gap-4">
-               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Légal</span>
-               <button onClick={() => { setLegalTab('privacy'); setIsLegalOpen(true); }} className="text-sm font-medium hover:text-orange-500 transition-colors text-left">Confidentialité</button>
-               <button onClick={() => { setLegalTab('cgu'); setIsLegalOpen(true); }} className="text-sm font-medium hover:text-orange-500 transition-colors text-left">CGV</button>
+               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Légal</span>
+               <button onClick={() => { setLegalTab('privacy'); setIsLegalOpen(true); }} className="text-sm font-bold text-slate-700 hover:text-orange-500 transition-colors text-left">Confidentialité</button>
+               <button onClick={() => { setLegalTab('cgu'); setIsLegalOpen(true); }} className="text-sm font-bold text-slate-700 hover:text-orange-500 transition-colors text-left">CGV</button>
             </div>
           </div>
         </div>
-        <div className="max-w-7xl mx-auto mt-20 pt-8 border-t border-white/5 text-center">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-600">© 2026 G-TECH LAB • TOUS DROITS RÉSERVÉS</p>
+        <div className="max-w-7xl mx-auto mt-20 pt-8 border-t border-gray-100 text-center">
+          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">© 2026 G-TECH LAB • TOUS DROITS RÉSERVÉS</p>
         </div>
       </footer>
 

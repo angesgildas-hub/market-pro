@@ -459,15 +459,17 @@ export default function Login() {
                     exit={{ height: 0, opacity: 0 }}
                     className="space-y-2"
                   >
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-5">Nom d'Utilisateur</label>
-                    <div className="relative group">
-                      <User className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-orange-500 transition-colors" size={18} />
+                    <label className="text-[10px] font-semibold uppercase tracking-widest text-[#6B7280] ml-5">Nom d'Utilisateur</label>
+                    <div className="relative flex items-center group w-full">
+                      <div className="absolute left-5 inset-y-0 flex items-center justify-center pointer-events-none text-slate-300 group-focus-within:text-[#4F8CFF] transition-colors z-10">
+                        <User size={18} />
+                      </div>
                       <input 
                         type="text" 
                         placeholder="Jean Dupont"
                         value={displayName}
                         onChange={(e) => setDisplayName(e.target.value)}
-                        className="w-full pl-14 pr-8 py-4 bg-slate-50 border-2 border-transparent rounded-[24px] focus:bg-white focus:border-orange-500/20 focus:ring-4 focus:ring-orange-500/5 transition-all outline-none font-bold text-slate-700 placeholder:text-slate-200 shadow-sm text-sm"
+                        className="w-full !pl-[52px] pr-8 !h-[54px] bg-slate-50 border border-slate-100 rounded-[20px] focus:bg-white focus:border-[#4F8CFF] focus:ring-4 focus:ring-[#4F8CFF]/10 transition-all outline-none font-bold text-slate-700 placeholder:text-slate-300 shadow-sm text-sm"
                       />
                     </div>
                   </motion.div>
@@ -475,36 +477,40 @@ export default function Login() {
               </AnimatePresence>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-5">Adresse Email</label>
-                <div className="relative group">
-                  <Mail className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-orange-500 transition-colors" size={18} />
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-[#6B7280] ml-5">Adresse Email</label>
+                <div className="relative flex items-center group w-full">
+                  <div className="absolute left-5 inset-y-0 flex items-center justify-center pointer-events-none text-slate-300 group-focus-within:text-[#4F8CFF] transition-colors z-10">
+                    <Mail size={18} />
+                  </div>
                   <input 
                     type="email" 
                     placeholder="manager@market.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-14 pr-8 py-4 bg-slate-50 border-2 border-transparent rounded-[24px] focus:bg-white focus:border-orange-500/20 focus:ring-4 focus:ring-orange-500/5 transition-all outline-none font-bold text-slate-700 placeholder:text-slate-200 shadow-sm text-sm"
+                    className="w-full !pl-[52px] pr-8 !h-[54px] bg-slate-50 border border-slate-100 rounded-[20px] focus:bg-white focus:border-[#4F8CFF] focus:ring-4 focus:ring-[#4F8CFF]/10 transition-all outline-none font-bold text-slate-700 placeholder:text-slate-300 shadow-sm text-sm"
                     required
                   />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-5">Mot de Passe</label>
-                <div className="relative group">
-                  <Lock className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-orange-500 transition-colors" size={18} />
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-[#6B7280] ml-5">Mot de Passe</label>
+                <div className="relative flex items-center group w-full">
+                  <div className="absolute left-5 inset-y-0 flex items-center justify-center pointer-events-none text-slate-300 group-focus-within:text-[#4F8CFF] transition-colors z-10">
+                    <Lock size={18} />
+                  </div>
                   <input 
                     type={showPassword ? "text" : "password"} 
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-14 pr-14 py-4 bg-slate-50 border-2 border-transparent rounded-[24px] focus:bg-white focus:border-orange-500/20 focus:ring-4 focus:ring-orange-500/5 transition-all outline-none font-bold text-slate-700 placeholder:text-slate-200 shadow-sm text-sm"
+                    className="w-full !pl-[52px] !pr-[52px] !h-[54px] bg-slate-50 border border-slate-100 rounded-[20px] focus:bg-white focus:border-[#4F8CFF] focus:ring-4 focus:ring-[#4F8CFF]/10 transition-all outline-none font-bold text-slate-700 placeholder:text-slate-300 shadow-sm text-sm"
                     required
                   />
                   <button 
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-300 hover:text-orange-500 transition-all p-2 rounded-full hover:bg-white active:scale-90"
+                    className="absolute right-5 inset-y-0 flex items-center justify-center text-slate-300 hover:text-[#4F8CFF] transition-all p-2 rounded-full hover:bg-white active:scale-90 z-10"
                   >
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
@@ -514,7 +520,7 @@ export default function Login() {
                     <button 
                       type="button" 
                       onClick={handleForgotPassword}
-                      className="text-[9px] font-black text-slate-400 uppercase tracking-widest hover:text-orange-500 transition-colors"
+                      className="text-[9px] font-black text-[#9CA3AF] uppercase tracking-widest hover:text-[#4F8CFF] transition-colors"
                     >
                       Mot de passe oublié ?
                     </button>
@@ -563,7 +569,7 @@ export default function Login() {
                 <button 
                   type="button"
                   onClick={() => setIsRegistering(!isRegistering)}
-                  className="text-[10px] font-black text-slate-400 hover:text-orange-600 transition-colors uppercase tracking-[0.2em] pb-1 border-b-2 border-transparent hover:border-orange-500"
+                  className="text-[10px] font-black text-slate-400 hover:text-[#4F8CFF] transition-colors uppercase tracking-[0.2em] pb-1 border-b-2 border-transparent hover:border-[#4F8CFF]"
                 >
                   {isRegistering ? 'Déjà un compte ? Se Connecter' : 'Nouveau membre ? Créer un accès'}
                 </button>
@@ -575,7 +581,7 @@ export default function Login() {
         {/* Footer */}
         <div className="mt-8 flex flex-col items-center gap-2 opacity-40">
            <div className="flex items-center gap-2">
-              <ShieldCheck size={14} className="text-orange-500" />
+              <ShieldCheck size={14} className="text-[#4F8CFF]" />
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">Système Core v2.4.0-PRO</span>
            </div>
            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">© 2026 G-TECH LAB • Tous droits réservés</p>
@@ -592,7 +598,7 @@ export default function Login() {
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
               className="bg-white w-full max-w-md rounded-[40px] overflow-hidden shadow-2xl border border-gray-100 p-10 text-center font-sans animate-none"
             >
-              <div className="w-20 h-20 bg-orange-50 rounded-[30px] flex items-center justify-center text-orange-500 mx-auto mb-6 shadow-xl shadow-orange-500/10">
+              <div className="w-20 h-20 bg-[#F0F6FF] rounded-[30px] flex items-center justify-center text-[#4F8CFF] mx-auto mb-6 shadow-xl shadow-[#4F8CFF]/10">
                 <ShieldAlert size={40} />
               </div>
               <h3 className="text-xl font-extrabold text-slate-900 tracking-tight uppercase leading-snug mb-3">
